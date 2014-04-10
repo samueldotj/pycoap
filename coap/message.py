@@ -58,17 +58,34 @@ class Message(CoapMessage):
                              token=token, token_length=len(token), options=options, payload=payload if payload else '')
 
         #assert token is None or type(token) is bytearray
-        self.state = MessageState.init
-        self.status = MessageStatus.success
-        self.server_reply_list = []
+        assert self.token_length in [0, 1, 2, 4, 8]
 
+        """State machine states"""
+        self.state = MessageState.init
+        """When was the message state changed."""
         self._state_change_timestamp = datetime.now()
+        """What is the time out for this message
+
+        Using this timeout, _state_change_timestamp and datetime.now() it is easy to find whether timeout happened or not.
+        """
         self.timeout = COAP_ACK_TIMEOUT * COAP_ACK_RANDOM_FACTOR
+        """How many times this message was retransmitted(because of timeout).
+
+        Once this count reaches COAP_MAX_RETRANSMIT the message will be set to failed state.
+        """
         self.retransmission_counter = 0
 
+        """Status of the request/response"""
+        self.status = MessageStatus.success
+        """"Messages received from the other side as a reply"""
+        self.server_reply_list = []
+
+        """An event on which callers can wait.
+
+        This event will be triggered once the coap message it transmitted and received a response or timeout.
+        """
         self.transaction_complete_event = threading.Event()
 
-        assert self.token_length in [0, 1, 2, 4, 8]
 
     def change_state(self, new_state):
         """ Change messages state to given new state.
