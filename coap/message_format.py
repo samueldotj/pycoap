@@ -116,8 +116,8 @@ class CoapMessage:
         self.token_length = token_length
         self.token = token
         self.coap_option = options + [None]
-        self.payload = payload
-        if len(payload) > 0:
+        self.payload = payload if payload is not None else ''
+        if len(self.payload) > 0:
             self.payload_marker = PAYLOAD_MARK
         else:
             self.payload_marker = 0
