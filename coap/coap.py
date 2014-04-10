@@ -44,7 +44,7 @@ class Coap(asyncore.dispatcher):
         # CoAP messages are maintained in different lists based on the message state.
         self.message_queues = {
             MessageState.init: [],
-            MessageState.to_be_received : [],
+            MessageState.to_be_received: [],
             MessageState.wait_for_send: [],
             MessageState.wait_for_ack: [],
             MessageState.wait_for_response: [],
@@ -165,10 +165,7 @@ class Coap(asyncore.dispatcher):
         If the message is not found in the state machine then it would throw an exception.
         """
         if msg.state == MessageState.init or self._remove_message(msg):
-            if msg.state == MessageState.init:
-                assert new_state == MessageState.wait_for_send or new_state == MessageState.to_be_received
-            msg.state_change_timestamp = datetime.now()
-            msg.state = new_state
+            msg.change_state(new_state)
             self.message_queues[new_state].append(msg)
         else:
             raise Exception('Invalid message({0}) state {1} new_state {2}'.format(msg.message_id, msg.state, new_state))
@@ -281,4 +278,5 @@ class Coap(asyncore.dispatcher):
     def delete(self, uri_path, confirmable=True, options=[]):
         """ CoAP DELETE Request """
         return self._request(method_code=MethodCode.delete, uri_path=uri_path, confirmable=confirmable, options=options)
+
 

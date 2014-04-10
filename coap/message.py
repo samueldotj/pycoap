@@ -62,8 +62,7 @@ class Message(CoapMessage):
         self.status = MessageStatus.success
         self.server_reply_list = []
 
-        self.last_state = self.state
-        self.state_change_timestamp = datetime.now()
+        self._state_change_timestamp = datetime.now()
         self.timeout = COAP_ACK_TIMEOUT * COAP_ACK_RANDOM_FACTOR
         self.retransmission_counter = 0
 
@@ -71,13 +70,24 @@ class Message(CoapMessage):
 
         assert self.token_length in [0, 1, 2, 4, 8]
 
+    def change_state(self, new_state):
+        """ Change messages state to given new state.
+
+        Also record when this change happened(_state_change_timestamp). This is timestamp is used in timeout calculation.
+        """
+        if self.state == MessageState.init:
+            assert new_state == MessageState.wait_for_send or new_state == MessageState.to_be_received
+
+        self.state = new_state
+        self._state_change_timestamp = datetime.now()
+
     def get_timeout(self):
         """
         Returns timeout remaining in seconds.
         +ve value means the timeout is in future.
         -ve value means it is already late.
         """
-        passed_time = (datetime.now() - self.state_change_timestamp).total_seconds()
+        passed_time = (datetime.now() - self._state_change_timestamp).total_seconds()
         return self.timeout - passed_time
 
     @staticmethod
