@@ -139,8 +139,9 @@ class Coap(asyncore.dispatcher):
         If found it returns the list index and message itself.
         If no match found then None is returned.
         """
+        assert token is not None or message_id is not None
         for idx, msg in enumerate(self.message_queues[state]):
-            if ((token is None and msg.token is None) or token == msg.token) and message_id == msg.message_id:
+            if (token is None or token == msg.token) and (message_id is None or message_id == msg.message_id):
                 return idx, msg
         return None, None
 
@@ -170,38 +171,77 @@ class Coap(asyncore.dispatcher):
         else:
             raise Exception('Invalid message({0}) state {1} new_state {2}'.format(msg.message_id, msg.state, new_state))
 
+    def _receive_ack(self, msg):
+        """Receives an ACK and transitions message's state based on that.
+        """
+        self._remove_message(msg)
+
+        idx, parent_msg = self._find_message(token=None, message_id=msg.message_id, state=MessageState.wait_for_ack)
+        if parent_msg is None:
+            logging.warning('ACK received but no matching message found - Sending RESET for {0}'.format(str(msg)))
+            reset_msg = Message(message_id=msg.message_id, message_type=MessageType.reset)
+            self.send(reset_msg.build())
+            return
+        if parent_msg.type != MessageType.confirmable:
+            logging.error('ACK received for message which is not expecting it - ignoring {0}'.format(str(msg)))
+            return
+
+        self._transition_message(parent_msg, MessageState.wait_for_response)
+
+        if msg.class_code == 0 and msg.class_detail == 0:
+            # if this is empty message send just for ACK we are already done.
+            logging.debug('Separate ACK {0}'.format(str(msg)))
+            return
+        else:
+            logging.debug('Piggybacked RESPONSE {0}'.format(str(msg)))
+           # This message has a piggybacked response, so receive it.
+            self._receive_response(parent_msg, msg)
+
+    def _receive_response(self, req_msg, resp_msg):
+        response_code = resp_msg.class_code << 5 | resp_msg.class_detail
+        req_msg.server_reply_list.append(resp_msg)
+        self._remove_message(req_msg)
+
+        # wake up threads waiting for this message
+        req_msg.transaction_complete_event.set()
+
     def _receive_message(self, msg):
         """Handles a received COAP message.
 
            The state machine calls this function to process a received a CoAP message.
         """
         logging.info('Received CoAP message {0}'.format(str(msg)))
-        is_response = msg.class_code in [2, 3, 4, 5]
-        if is_response:
+
+        if msg.type == MessageType.reset:
+            #Handle reset messages
             self._remove_message(msg)
+            logging.error('RESET handling is not yet implemented')
+            return
 
-            idx, req_msg = self._find_message(msg.token, msg.message_id, MessageState.wait_for_ack)
-            if req_msg is None:
-                idx, req_msg = self._find_message(msg.token, msg.message_id, MessageState.wait_for_response)
-            if req_msg is None:
-                logging.warning('Response without request - Ignoring {0}'.format(str(msg)))
-                return
+        # If ACK is received, do the necessary processing for that first.
+        if msg.type == MessageType.acknowledgment:
+            self._receive_ack(msg)
+            return
 
-            req_msg.server_reply_list.append(msg)
-            self._remove_message(req_msg)
+        assert msg.type in [MessageType.confirmable, MessageType.non_confirmable]
 
-            #TODO - find whether what all we got - just ack or both ack and response or reset?
-
-            # wake up threads waiting for this message
-            req_msg.transaction_complete_event.set()
+        # At this point this message can be either a REQUEST or a separate response.
+        idx, req_msg = self._find_message(token=msg.token, message_id=None, state=MessageState.wait_for_response)
+        if req_msg is None:
+            # This is a new REQ
+            logging.error('REQUEST not implemented yet {0}'.format(str(msg)))
         else:
-            logging.error('Request is not implemented')
+            # We got the response as separate message, first send ACK if needed.
+            if msg.type == MessageType.confirmable:
+                ack_msg = Message(message_id=msg.message_id, message_type=MessageType.acknowledgment)
+                self.send(ack_msg.build())
+            self._receive_response(req_msg, msg)
 
     def _send_message(self, msg):
         """Process a message which needs to be send out.
 
            Converts the given message in to bytestream and then sends it over the asyncore socket.
-           Then places the message in appropriate wait queue to wait for repsonse.
+           Then places the message in appropriate wait queue to wait for response.
         """
         logging.info('Sending CoAP message {0}'.format(str(msg)))
 
@@ -227,6 +267,8 @@ class Coap(asyncore.dispatcher):
             msg.status = MessageStatus.ack_timeout
         elif msg.state == MessageState.wait_for_response:
             msg.status = MessageStatus.response_timeout
+
+        logging.log('TIMEOUT - Removing message {0}'.format(str(msg)))
         self._remove_message(msg)
         msg.transaction_complete_event.set()
 
@@ -248,18 +290,17 @@ class Coap(asyncore.dispatcher):
         option = Option(option_number=OptionNumber.uri_path, option_value=uri_path)
         options.append(option)
         message_type = MessageType.confirmable if confirmable else MessageType.non_confirmable
-        if timeout is None:
-            timeout = self.timeout
 
         # create a new message
         message_id = self._id_generator.get_next_id()
         msg = Message(message_id=message_id, class_detail=method_code, message_type=message_type, options=options, payload=payload)
         # add to the transmitter queue and wakeup the transmitter to do the processing
+        msg.transaction_complete_event.clear()
         self._transition_message(msg, MessageState.wait_for_send)
         self.fsm_event.set()
 
         # Wait for the response event to fire.
-        if not msg.transaction_complete_event.wait(timeout=self.timeout):
+        if not msg.transaction_complete_event.wait(timeout):
             msg.status = MessageStatus.failed
         return msg
 
