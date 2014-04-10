@@ -3,8 +3,8 @@ Provides abstraction over low level coap protocol data structures(Option and Mes
 """
 import struct
 import threading
+import random
 from enum import Enum
-from random import randint
 from datetime import datetime
 
 from message_format import CoapMessage, CoapOption
@@ -68,7 +68,7 @@ class Message(CoapMessage):
 
         Using this timeout, _state_change_timestamp and datetime.now() it is easy to find whether timeout happened or not.
         """
-        self.timeout = COAP_ACK_TIMEOUT * COAP_ACK_RANDOM_FACTOR
+        self.timeout = random.uniform(COAP_ACK_TIMEOUT, COAP_ACK_TIMEOUT * COAP_ACK_RANDOM_FACTOR)
         """How many times this message was retransmitted(because of timeout).
 
         Once this count reaches COAP_MAX_RETRANSMIT the message will be set to failed state.
@@ -149,7 +149,7 @@ class TokenGenerator():
 class SequenceMessageIdGenerator(MessageIdGenerator):
     def __init__(self):
         # Starts with the a random number as requried by CoAP spec.
-        self._next_message_id = randint(1, COAP_MAX_MESSAGE_ID)
+        self._next_message_id = random.randint(1, COAP_MAX_MESSAGE_ID)
 
     def get_next_id(self):
         """ Returns the next sequence number.
@@ -164,7 +164,7 @@ class SequenceTokenGenerator(TokenGenerator):
     def __init__(self, token_length=4):
         assert token_length == 1 or token_length == 2 or token_length == 4 or token_length == 8
         max_number = (1 << (token_length * 8)) - 1
-        self._next_token = randint(1, max_number)
+        self._next_token = random.randint(1, max_number)
         self._max_number = max_number
         self._token_length = token_length
 
