@@ -321,3 +321,20 @@ class Coap(asyncore.dispatcher):
         return self._request(method_code=MethodCode.delete, uri_path=uri_path, confirmable=confirmable, options=options)
 
 
+def request(coap_url, method=MethodCode.get):
+    """ A wrapper to make a single request.
+
+    Example - coap.request('coap://coap.me/hello')
+    """
+    import urlparse
+    url= urlparse.urlparse(coap_url)
+    if url.scheme.lower() not in ['coap', '']:
+        raise Exception('Not a CoAP URI')
+
+    c = Coap(host=url.hostname, port=url.port if url.port else COAP_DEFAULT_PORT)
+    assert method == MethodCode.get
+    result = c.get(url.path[1:])
+    c.destroy()
+    return result
+
+
