@@ -62,10 +62,14 @@ class Coap(asyncore.dispatcher):
         self.fsm_thread = threading.Thread(target=self._fsm_loop)
         self.fsm_thread.start()
 
-    def __del__(self):
+    def destroy(self):
         """ Stops the threads started by this class. """
-        asyncore.ExitNow('Stop requested')
+        logging.info('Stopping threads')
         self._stop_requested = True
+
+        self.close()
+        self.asyncore_thread.join()
+
         self.fsm_event.set()
         self.fsm_thread.join()
 
@@ -277,3 +281,4 @@ class Coap(asyncore.dispatcher):
     def delete(self, uri_path, confirmable=True, options=[]):
         """ CoAP DELETE Request """
         return self._request(method_code=MethodCode.delete, uri_path=uri_path, confirmable=confirmable, options=options)
+
