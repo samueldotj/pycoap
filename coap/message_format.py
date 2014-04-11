@@ -93,14 +93,27 @@ class CoapOption:
     def parse(data, last_option_number=0):
         cont = coap_option.parse(data)
         con = CoapOption(option_number=last_option_number + cont.delta, option_value=cont.value)
-
         # overwrite the calculated values with read value
-        con.delta = cont.delta
-        con.length = cont.length
-        con.delta_extended = cont.delta_extended
-        con.length_extended = cont.length_extended
-        con.value = cont.value
+        con.__dict__.update(cont)
         return con
+
+    def __str__(self):
+        return 'delta = {delta} value={value} length={length} delta_ext={delta_ext} length_ext={length_ext}'\
+            .format(delta=self.option_number, value=self.value, length=self.length,
+                    delta_ext=self.delta_extended, length_ext=self.length_extended)
+
+    def __eq__(self, other):
+        if isinstance(other, CoapOption):
+            return self.delta == other.delta and self.delta_extended == other.delta_extended and \
+                   self.length == other.length and self.length_extended == other.length_extended and \
+                   self.value == other.value
+        elif type(other) is Container:
+            new_option = CoapOption(option_number=0, option_value='')
+            # overwrite the calculated values with read value
+            new_option.__dict__.update(other)
+            return self == new_option
+        else:
+            raise Exception('Can not compare {0} with {1}'.format(type(self), type(other)))
 
 
 class CoapMessage:
