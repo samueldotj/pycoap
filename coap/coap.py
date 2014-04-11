@@ -198,7 +198,6 @@ class Coap(asyncore.dispatcher):
             self._receive_response(parent_msg, msg)
 
     def _receive_response(self, req_msg, resp_msg):
-        response_code = resp_msg.class_code << 5 | resp_msg.class_detail
         req_msg.server_reply_list.append(resp_msg)
         self._remove_message(req_msg)
 
@@ -304,7 +303,7 @@ class Coap(asyncore.dispatcher):
         # Wait for the response event to fire.
         if not msg.transaction_complete_event.wait(timeout):
             msg.status = MessageStatus.failed
-        return msg
+        return CoapResult(request_msg=msg, response_msg=msg.server_reply_list[-1])
 
     def get(self, uri_path, confirmable=True, options=None):
         """ CoAP GET Request """
@@ -322,6 +321,23 @@ class Coap(asyncore.dispatcher):
         """ CoAP DELETE Request """
         return self._request(method_code=MethodCode.delete, uri_path=uri_path, confirmable=confirmable, options=options)
 
+
+class CoapResult:
+    """ Represents result of a CoAP Request
+    """
+    def __init__(self, request_msg, response_msg):
+        assert request_msg
+        self.request_msg = request_msg
+        self.response_msg = response_msg
+        self.status = request_msg.status
+        if response_msg:
+            self.response_code = response_msg.class_code << 5 | response_msg.class_detail
+            self.payload = bytearray(response_msg.payload)
+            self.options = response_msg.coap_option
+        else:
+            self.response_code = 0
+            self.payload = bytearray()
+            self.options = []
 
 def request(coap_url, method=MethodCode.get):
     """ A wrapper to make a single request.
