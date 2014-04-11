@@ -287,6 +287,8 @@ class Coap(asyncore.dispatcher):
     def _request(self, method_code, uri_path, confirmable, options, payload=None, timeout=None):
         """ Creates a CoAP request message and puts it in the state machine.
         """
+        if options is None:
+            options = []
         option = Option(option_number=OptionNumber.uri_path, option_value=uri_path)
         options.append(option)
         message_type = MessageType.confirmable if confirmable else MessageType.non_confirmable
@@ -304,19 +306,19 @@ class Coap(asyncore.dispatcher):
             msg.status = MessageStatus.failed
         return msg
 
-    def get(self, uri_path, confirmable=True, options=[]):
+    def get(self, uri_path, confirmable=True, options=None):
         """ CoAP GET Request """
         return self._request(method_code=MethodCode.get, uri_path=uri_path, confirmable=confirmable, options=options)
 
-    def put(self, uri_path, confirmable=True, options=[], payload=None):
+    def put(self, uri_path, confirmable=True, options=None, payload=None):
         """ CoAP PUT Request """
         return self._request(method_code=MethodCode.put, uri_path=uri_path, confirmable=confirmable, options=options)
 
-    def post(self, uri_path, confirmable=True, options=[], payload=None):
+    def post(self, uri_path, confirmable=True, options=None, payload=None):
         """ CoAP POST Request """
         return self._request(method_code=MethodCode.post, uri_path=uri_path, confirmable=confirmable, options=options)
 
-    def delete(self, uri_path, confirmable=True, options=[]):
+    def delete(self, uri_path, confirmable=True, options=None):
         """ CoAP DELETE Request """
         return self._request(method_code=MethodCode.delete, uri_path=uri_path, confirmable=confirmable, options=options)
 

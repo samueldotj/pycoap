@@ -120,7 +120,9 @@ class CoapMessage:
     """ Container for coap message construct.
     """
     def __init__(self, version=0, message_type=0, class_code=0, class_detail=0, message_id=0,
-                 token_length=0, token='', options=[], payload=''):
+                 token_length=0, token='', options=None, payload=''):
+        if options is None:
+            options = []
         self.version = version
         self.type = message_type
         self.class_code = class_code

@@ -52,7 +52,9 @@ class Message(CoapMessage):
     """ Subclass of CoapMessage to provide additional services(such as timeout, retransmission)
     """
     def __init__(self, message_id=0, message_type=MessageType.confirmable, class_code=0, class_detail=0,
-                 token='', options=[], payload=None):
+                 token='', options=None, payload=None):
+        if options is None:
+            options = []
         CoapMessage.__init__(self, version=COAP_VERSION, message_type=message_type, message_id=message_id,
                              class_code=class_code, class_detail=class_detail,
                              token=token, token_length=len(token), options=options, payload=payload if payload else '')
