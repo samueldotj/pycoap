@@ -88,8 +88,8 @@ def test_build_coap_message():
                         options=[CoapOption(option_number=OptionNumber.uri_path, option_value='hello')])
 
     #simple GET request with token
-    verify_coap_message('H\x01\x01\x001234abcd\xb5hello\x00',
+    verify_coap_message('H\x01\x01\x001234abcd\xbd\x01check_my_token\x00',
                         message_type=MessageType.confirmable, message_id=0x100, class_code=0, class_detail=MethodCode.get,
                         token='1234abcd', payload=None,
-                        options=[CoapOption(option_number=OptionNumber.uri_path, option_value='hello')])
+                        options=[CoapOption(option_number=OptionNumber.uri_path, option_value='check_my_token')])
 
