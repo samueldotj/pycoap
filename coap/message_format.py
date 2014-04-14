@@ -69,20 +69,27 @@ class CoapOption:
     """ Container for CoAP option construct.
     """
     def __init__(self, option_number, option_value, last_option_number=0):
-        def value_to_len_ext(length):
-            if length <= 12:
-                return length, None
-            else:
-                if length < TWO_BYTE_START:
-                    return ONE_BYTE_MARKER, length - ONE_BYTE_START
-                else:
-                    return TWO_BYTE_MARKER, length - TWO_BYTE_START
-
         self.option_number = option_number
         self.value = option_value
-        self.delta, self.delta_extended = value_to_len_ext(option_number - last_option_number)
-        self.length, self.length_extended = value_to_len_ext(len(option_value))
+        self.delta, self.delta_extended = self._value_to_len_ext(option_number - last_option_number)
+        self.length, self.length_extended = self._value_to_len_ext(len(option_value))
         self.is_payload = 0
+
+    def _value_to_len_ext(self, length):
+        """ Returns delta and delta_ext for a given length.
+        """
+        if length <= 12:
+            return length, None
+        else:
+            if length < TWO_BYTE_START:
+                return ONE_BYTE_MARKER, length - ONE_BYTE_START
+            else:
+                return TWO_BYTE_MARKER, length - TWO_BYTE_START
+
+    def fix_option_number(self, last_option_number):
+        """ Fix delta and delta_ext fields in the option based on the last option.
+        """
+        self.delta, self.delta_extended = self._value_to_len_ext(self.option_number - last_option_number)
 
     def build(self):
         """ Returns CoAP option as a bytearray.
@@ -142,6 +149,14 @@ class CoapMessage:
         """
         if self.coap_option:
             self.coap_option.sort(key=lambda o: o.option_number if o else OptionNumber.max)
+            last_option_number = 0
+            for opt in self.coap_option:
+                if opt is None:
+                    continue
+                opt.fix_option_number(last_option_number)
+                last_option_number = opt.option_number
+
+
         return coap_message.build(self)
 
     @staticmethod

@@ -288,8 +288,9 @@ class Coap(asyncore.dispatcher):
         """
         if options is None:
             options = []
-        option = Option(option_number=OptionNumber.uri_path, option_value=uri_path)
-        options.append(option)
+        for path_segment in uri_path.split('/'):
+            option = Option(option_number=OptionNumber.uri_path, option_value=path_segment)
+            options.append(option)
         message_type = MessageType.confirmable if confirmable else MessageType.non_confirmable
 
         # create a new message
