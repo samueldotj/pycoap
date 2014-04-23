@@ -1,7 +1,7 @@
 pycoap
 ======
 
-Simple implementation of Constrained Application Protocol (CoAP).
+Simple implementation of Constrained Application Protocol (CoAP) in Python.
 
 Example:
 ```python
