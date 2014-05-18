@@ -24,7 +24,7 @@ def option_length(ctx):
     assert ctx.length == ONE_BYTE_MARKER or ctx.length == TWO_BYTE_MARKER
     return ctx.length_extended + (ONE_BYTE_START if ctx.length == ONE_BYTE_MARKER else TWO_BYTE_START)
 
-option_header = Struct('coap_option',
+option_full = Struct('option_full',
                      EmbeddedBitStruct(
                          BitField('delta', 4),
                          BitField('length', 4)),
@@ -43,8 +43,8 @@ option_header = Struct('coap_option',
                          Field('value', option_length))
 
 coap_option = Struct('coap_option',
-                     Peek(UBInt8("is_payload")),
-                     If(lambda ctx: ctx.is_payload != PAYLOAD_MARK, Embed(option_header))
+                     Optional(Peek(UBInt8("is_payload"))),
+                     If(lambda ctx: ctx.is_payload != PAYLOAD_MARK, Embed(option_full))
                      )
 
 coap_message = Struct('coap_message',
@@ -60,8 +60,7 @@ coap_message = Struct('coap_message',
                       RepeatUntil(lambda obj, ctx: obj is None or obj.is_payload == PAYLOAD_MARK, Optional(coap_option)),
 
                       Optional(Peek(UBInt8("payload_marker"), PAYLOAD_MARK)),
-                      If(lambda ctx: ctx.payload_marker == PAYLOAD_MARK,
-                      OptionalGreedyRange(Byte("payload")))
+                      If(lambda ctx: ctx.payload_marker == PAYLOAD_MARK, OptionalGreedyRange(Byte("payload")))
                       )
 
 
@@ -94,11 +93,14 @@ class CoapOption:
     def build(self):
         """ Returns CoAP option as a bytearray.
         """
-        return coap_option.build(self)
+        return option_full.build(self)
 
     @staticmethod
     def parse(data, last_option_number=0):
         cont = coap_option.parse(data)
+        # if is a artificial empty option, added by construct RepeatUntil(end inclusive) then remove it.
+        if cont.delta == 0 and cont.length == 0:
+            return None
         con = CoapOption(option_number=last_option_number + cont.delta, option_value=cont.value)
         # overwrite the calculated values with read value
         con.__dict__.update(cont)
@@ -156,15 +158,25 @@ class CoapMessage:
                 opt.fix_option_number(last_option_number)
                 last_option_number = opt.option_number
 
-
         return coap_message.build(self)
 
     @staticmethod
     def parse(data):
         msg = coap_message.parse(data)
+        last_opt_no = 0
+        options = []
+        for opt in msg.coap_option:
+            if opt is None or opt.is_payload == PAYLOAD_MARK:
+                continue
+            option = CoapOption.parse(coap_option.build(opt), last_option_number=last_opt_no)
+            if option is None:
+                continue
+            options.append(option)
+            last_opt_no = options[-1].option_number
+
         return CoapMessage(version=msg.version, message_type=msg.type, message_id=msg.message_id,
                            class_code=msg.class_code, class_detail=msg.class_detail,
-                           token_length=msg.token_length, token=msg.token, options=msg.coap_option,
+                           token_length=msg.token_length, token=msg.token, options=options,
                            payload=msg.payload)
 
     def __str__(self):

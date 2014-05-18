@@ -22,12 +22,12 @@ def verify_coap_option(bin_data, option_number, option_value):
         length = 269 + option.length_extended
     assert length == len(option_value)
 
-    cal__opt_number = option.delta
+    calc_opt_number = option.delta
     if option.delta == 13:
-        cal__opt_number = 13 + option.delta_extended
+        calc_opt_number = 13 + option.delta_extended
     elif option.delta == 14:
-        cal__opt_number = 269 + option.delta_extended
-    assert cal__opt_number == option_number
+        calc_opt_number = 269 + option.delta_extended
+    assert calc_opt_number == option_number
 
 
 def test_coap_option():
@@ -67,7 +67,9 @@ def verify_coap_message(bin_data,  message_type, message_id, class_code, class_d
     assert msg.class_detail == class_detail
     assert msg.token_length == token_length
     if len(options) > 0:
-        msg_options = msg.coap_option[:-3]
+        msg_options = msg.coap_option
+        if msg_options[-1] is None:
+            del msg_options[-1]
         assert len(msg_options) == len(options)
         for idx, opt in enumerate(options):
             print str(opt)

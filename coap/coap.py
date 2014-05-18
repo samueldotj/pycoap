@@ -11,7 +11,6 @@ import threading
 import socket
 import logging
 import asyncore
-from datetime import datetime
 
 from code_registry import MethodCode, MessageType, OptionNumber
 import message
@@ -23,6 +22,17 @@ UDP_RECEIVE_BUFFER_SIZE = 2048
 DEFAULT_REQUEST_TIMEOUT = 5
 
 
+""" Implemented CoAP options, any other options would result in reset message(if it is a critical option).
+"""
+implemented_options = [
+    OptionNumber.uri_host,
+    OptionNumber.uri_port,
+    OptionNumber.uri_path,
+    OptionNumber.content_format,
+    OptionNumber.uri_query
+]
+
+
 class Coap(asyncore.dispatcher):
     """ Manages CoAP request to a server.
     """
@@ -32,7 +42,7 @@ class Coap(asyncore.dispatcher):
         asyncore.dispatcher.__init__(self)
 
         # decode the given host name and create a socket out of it.
-        af, socktype, proto, canonname, sa = socket.getaddrinfo(host, port, socket.AF_INET6, socket.SOCK_DGRAM)[0]
+        af, socktype, proto, canonname, sa = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)[0]
         self.create_socket(af, socktype)
         self.connect(sa)
 
@@ -211,8 +221,18 @@ class Coap(asyncore.dispatcher):
         """
         logging.info('Received CoAP message {0}'.format(str(msg)))
 
+        # Check if any unimplemented option appears in the message.
+        # If there is any critical unsupported message we should send a reset message.
+        unsupported_options = list(filter((lambda opt: opt and opt.option_number not in implemented_options), msg.coap_option))
+        unsupported_critical_options = list(filter((lambda opt: (opt.option_number % 2) == 1), unsupported_options))
+        if len(unsupported_critical_options) > 0:
+            logging.warning('Unsupported critical option received - Sending RESET for {0}'.format(str(msg)))
+            reset_msg = Message(message_id=msg.message_id, message_type=MessageType.reset)
+            self.send(reset_msg.build())
+            return
+
+        # If we got reset message in response to a request, then handle it accordingly
         if msg.type == MessageType.reset:
-            #Handle reset messages
             self._remove_message(msg)
             logging.error('RESET handling is not yet implemented')
             return
@@ -355,5 +375,3 @@ def request(coap_url, method=MethodCode.get):
     result = c.get(url.path[1:])
     c.destroy()
     return result
-
-
