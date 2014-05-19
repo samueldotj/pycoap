@@ -60,6 +60,8 @@ class OptionNumber(int, Enum):
     uri_query = 15
     accept = 17
     location_query = 20
+    block2 = 23
+    block1 = 27
     proxy_uri = 35
     proxy_scheme = 39
     max = 1000

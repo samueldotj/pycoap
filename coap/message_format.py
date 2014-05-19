@@ -4,6 +4,7 @@ http://tools.ietf.org/html/draft-ietf-core-coap-18#section-3
 """
 
 from construct import *
+from construct_ext import RepeatUntilExclude
 from code_registry import OptionNumber
 
 ONE_BYTE_MARKER = 13
@@ -13,7 +14,6 @@ ONE_BYTE_START = 13
 TWO_BYTE_START = 269
 
 PAYLOAD_MARK = 0xff
-
 
 def option_length(ctx):
     """ Returns CoAP options length by decoding the length and length extended fields.
@@ -57,9 +57,9 @@ coap_message = Struct('coap_message',
                       UBInt16('message_id'),
                       Field('token', lambda ctx: ctx.token_length),
 
-                      RepeatUntil(lambda obj, ctx: obj is None or obj.is_payload == PAYLOAD_MARK, Optional(coap_option)),
+                      RepeatUntilExclude(lambda obj, ctx: obj is None or obj.is_payload == PAYLOAD_MARK, Optional(coap_option)),
 
-                      Optional(Peek(UBInt8("payload_marker"), PAYLOAD_MARK)),
+                      Optional(Peek(UBInt8("payload_marker"))),
                       If(lambda ctx: ctx.payload_marker == PAYLOAD_MARK, OptionalGreedyRange(Byte("payload")))
                       )
 
@@ -98,9 +98,6 @@ class CoapOption:
     @staticmethod
     def parse(data, last_option_number=0):
         cont = coap_option.parse(data)
-        # if is a artificial empty option, added by construct RepeatUntil(end inclusive) then remove it.
-        if cont.delta == 0 and cont.length == 0:
-            return None
         con = CoapOption(option_number=last_option_number + cont.delta, option_value=cont.value)
         # overwrite the calculated values with read value
         con.__dict__.update(cont)
@@ -139,7 +136,7 @@ class CoapMessage:
         self.message_id = message_id
         self.token_length = token_length
         self.token = token
-        self.coap_option = options + [None]
+        self.coap_option = options
         self.payload = payload if payload is not None else ''
         if len(self.payload) > 0:
             self.payload_marker = PAYLOAD_MARK
@@ -153,8 +150,6 @@ class CoapMessage:
             self.coap_option.sort(key=lambda o: o.option_number if o else OptionNumber.max)
             last_option_number = 0
             for opt in self.coap_option:
-                if opt is None:
-                    continue
                 opt.fix_option_number(last_option_number)
                 last_option_number = opt.option_number
 
@@ -163,16 +158,12 @@ class CoapMessage:
     @staticmethod
     def parse(data):
         msg = coap_message.parse(data)
-        last_opt_no = 0
+        last_option_number = 0
         options = []
         for opt in msg.coap_option:
-            if opt is None or opt.is_payload == PAYLOAD_MARK:
-                continue
-            option = CoapOption.parse(coap_option.build(opt), last_option_number=last_opt_no)
-            if option is None:
-                continue
+            option = CoapOption.parse(coap_option.build(opt), last_option_number=last_option_number)
             options.append(option)
-            last_opt_no = options[-1].option_number
+            last_option_number = options[-1].option_number
 
         return CoapMessage(version=msg.version, message_type=msg.type, message_id=msg.message_id,
                            class_code=msg.class_code, class_detail=msg.class_detail,

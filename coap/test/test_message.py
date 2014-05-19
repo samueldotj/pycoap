@@ -68,8 +68,6 @@ def verify_coap_message(bin_data,  message_type, message_id, class_code, class_d
     assert msg.token_length == token_length
     if len(options) > 0:
         msg_options = msg.coap_option
-        if msg_options[-1] is None:
-            del msg_options[-1]
         assert len(msg_options) == len(options)
         for idx, opt in enumerate(options):
             print str(opt)
@@ -79,18 +77,18 @@ def verify_coap_message(bin_data,  message_type, message_id, class_code, class_d
 
 def test_build_coap_message():
     #acknowledgment with empty message.
-    verify_coap_message('`\x00\x01\x00\x00',
-                        message_type=MessageType.acknowledgment, message_id=0x100, class_code=0, class_detail=0,
+    verify_coap_message('`\x01\xab\xcd',
+                        message_type=MessageType.acknowledgment, message_id=0xabcd, class_code=0, class_detail=MethodCode.get,
                         token='', payload=None, options=[])
 
     #simple GET request
-    verify_coap_message('@\x01\x01\x00\xb5hello\x00',
+    verify_coap_message('@\x01\x01\x00\xb5hello',
                         message_type=MessageType.confirmable, message_id=0x100, class_code=0, class_detail=MethodCode.get,
                         token='', payload=None,
                         options=[CoapOption(option_number=OptionNumber.uri_path, option_value='hello')])
 
     #simple GET request with token
-    verify_coap_message('H\x01\x01\x001234abcd\xbd\x01check_my_token\x00',
+    verify_coap_message('H\x01\x01\x001234abcd\xbd\x01check_my_token',
                         message_type=MessageType.confirmable, message_id=0x100, class_code=0, class_detail=MethodCode.get,
                         token='1234abcd', payload=None,
                         options=[CoapOption(option_number=OptionNumber.uri_path, option_value='check_my_token')])
