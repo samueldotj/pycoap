@@ -353,7 +353,7 @@ class CoapResult:
         self.status = request_msg.status
         if response_msg:
             self.response_code = response_msg.class_code << 5 | response_msg.class_detail
-            self.payload = bytearray(response_msg.payload)
+            self.payload = bytearray(response_msg.payload.value)
             self.options = response_msg.coap_option
         else:
             self.response_code = 0

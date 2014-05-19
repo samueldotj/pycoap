@@ -15,6 +15,7 @@ TWO_BYTE_START = 269
 
 PAYLOAD_MARK = 0xff
 
+
 def option_length(ctx):
     """ Returns CoAP options length by decoding the length and length extended fields.
     """
@@ -24,6 +25,7 @@ def option_length(ctx):
     assert ctx.length == ONE_BYTE_MARKER or ctx.length == TWO_BYTE_MARKER
     return ctx.length_extended + (ONE_BYTE_START if ctx.length == ONE_BYTE_MARKER else TWO_BYTE_START)
 
+# option_full defines the construct for a full coap option.
 option_full = Struct('option_full',
                      EmbeddedBitStruct(
                          BitField('delta', 4),
@@ -42,11 +44,19 @@ option_full = Struct('option_full',
                                 default=Pass),
                          Field('value', option_length))
 
+# coap_option evaluates to option_full if the next byte in stream is not payload marker.
 coap_option = Struct('coap_option',
                      Optional(Peek(UBInt8("is_payload"))),
                      If(lambda ctx: ctx.is_payload != PAYLOAD_MARK, Embed(option_full))
                      )
 
+# Defines payload marker and the following payload
+payload = Struct('payload',
+                 UBInt8("marker"),
+                 OptionalGreedyRange(Byte("value"))
+                 )
+
+# Defines a full coap message - header + [options] + [payload_marker, payload]
 coap_message = Struct('coap_message',
                       EmbeddedBitStruct(BitField('version', 2),
                                         BitField('type', 2),
@@ -60,7 +70,7 @@ coap_message = Struct('coap_message',
                       RepeatUntilExclude(lambda obj, ctx: obj is None or obj.is_payload == PAYLOAD_MARK, Optional(coap_option)),
 
                       Optional(Peek(UBInt8("payload_marker"))),
-                      If(lambda ctx: ctx.payload_marker == PAYLOAD_MARK, OptionalGreedyRange(Byte("payload")))
+                      If(lambda ctx: ctx.payload_marker == PAYLOAD_MARK, payload)
                       )
 
 
