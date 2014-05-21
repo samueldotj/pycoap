@@ -29,7 +29,9 @@ implemented_options = [
     OptionNumber.uri_port,
     OptionNumber.uri_path,
     OptionNumber.content_format,
-    OptionNumber.uri_query
+    OptionNumber.uri_query,
+    OptionNumber.block1,
+    OptionNumber.block2,
 ]
 
 
@@ -208,11 +210,37 @@ class Coap(asyncore.dispatcher):
             self._receive_response(parent_msg, msg)
 
     def _receive_response(self, req_msg, resp_msg):
-        req_msg.server_reply_list.append(resp_msg)
+        """Receives a response
+        """
         self._remove_message(req_msg)
+        req_msg.server_reply_list.append(resp_msg)
 
-        # wake up threads waiting for this message
-        req_msg.transaction_complete_event.set()
+        block2_options = resp_msg.find_option(OptionNumber.block2)
+        if len(block2_options) > 0:
+            self._receive_block_response(req_msg, resp_msg, block2_options)
+        else:
+            # wake up threads waiting for this message
+            req_msg.transaction_complete_event.set()
+
+    def _receive_block_response(self, req_msg, resp_msg, block2_options):
+        """Receives a BLOCK2 response.
+        """
+        if len(block2_options) > 1:
+            logging.warning('Multiple BLOCK2 options found in response - ignoring everything else but first')
+
+        block_number, more, size = Option.block_value_decode(block2_options[0].value)
+        logging.debug('Block2 response received NUM {0} More {1} Size {2}'.format(block_number, more, size))
+        if more:
+            #send request to fetch next block, reuse the same request(change block2 option and msg_id)
+            req_msg.remove_option(OptionNumber.block2)
+            block2_option = Option(OptionNumber.block2, Option.block_value_encode(block_number + 1, True, size))
+            req_msg.add_option(block2_option)
+
+            req_msg.recycle(self._id_generator.get_next_id())
+            self._transition_message(req_msg, MessageState.wait_for_send)
+        else:
+            # All blocks are received, so lets wake up the caller
+            req_msg.transaction_complete_event.set()
 
     def _receive_message(self, msg):
         """Handles a received COAP message.
@@ -353,7 +381,9 @@ class CoapResult:
         self.status = request_msg.status
         if response_msg:
             self.response_code = response_msg.class_code << 5 | response_msg.class_detail
-            self.payload = bytearray(response_msg.payload.value)
+            self.payload = ''
+            for msg in request_msg.server_reply_list:
+                self.payload += bytearray(msg.payload.value)
             self.options = response_msg.coap_option
         else:
             self.response_code = 0

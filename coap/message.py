@@ -4,6 +4,7 @@ Provides abstraction over low level coap protocol data structures(Option and Mes
 import struct
 import threading
 import random
+import math
 from enum import Enum
 from datetime import datetime
 
@@ -47,6 +48,55 @@ class Option(CoapOption):
     def __init__(self, option_number, option_value, last_option_number=0):
         CoapOption.__init__(self, option_number=option_number, option_value=option_value, last_option_number=last_option_number)
 
+    @staticmethod
+    def block_value_encode(block_number, more, size):
+        """
+        Encodes given block number, more and size to form a CoAP block option value as byte string.
+        """
+        sizes = [16, 32, 64, 128, 256, 512, 1024]
+        if size > 1024:
+            raise 'Invalid size {0}'.format(size)
+
+        m = 1 if more else 0
+        for szx, s in enumerate(sizes):
+            if size <= s:
+                break
+
+        value = (block_number << 4) | (m << 3) | szx
+        bit_len = value.bit_length()
+        byte_len = (bit_len / 8) + (1 if bit_len % 8 != 0 else 0)
+        if byte_len == 1:
+            return struct.pack('B', value)
+        elif byte_len == 2:
+            return struct.pack('BB', value >> 8, value & 0xff)
+        elif byte_len == 3:
+            return struct.pack('BBB', value >> 16, value >> 8, value & 0xff)
+        else:
+            raise 'Invalid Block size {0}'.format(size)
+
+    @staticmethod
+    def block_value_decode(value):
+        """
+        Decodes given CoAP block option value(byte stream) into block number, more and size.
+        """
+        if len(value) == 0:
+            return 0, False, 0
+        elif len(value) == 1:
+            option_value, = struct.unpack('B', value)
+        elif len(value) == 2:
+            value1, value2 = struct.unpack('BB', value)
+            option_value = (value1 << 8) | value2
+        elif len(value) == 3:
+            value1, value2, value3 = struct.unpack('BBB', value)
+            option_value = (value1 << 16) | (value2 << 8) | value3
+
+        block_number = option_value >> 4
+        more = ((option_value >> 3) & 1) != 0
+        szx = option_value & 0b111
+        size = 2 ** (szx + 4)
+
+        return block_number, more, size
+
 
 class Message(CoapMessage):
     """ Subclass of CoapMessage to provide additional services(such as timeout, retransmission)
@@ -79,6 +129,7 @@ class Message(CoapMessage):
 
         """Status of the request/response"""
         self.status = MessageStatus.success
+
         """"Messages received from the other side as a reply"""
         self.server_reply_list = []
 
@@ -88,6 +139,13 @@ class Message(CoapMessage):
         """
         self.transaction_complete_event = threading.Event()
 
+    def recycle(self, msg_id):
+        """ Recycle the given message so that it can be used to send copy/similar message again.
+            Note - Options are not cleared and same token is used.
+        """
+        self.state = MessageState.init
+        self.message_id = msg_id
+        self.retransmission_counter = 0
 
     def change_state(self, new_state):
         """ Change messages state to given new state.
@@ -116,6 +174,27 @@ class Message(CoapMessage):
         #Copy all the CoapMessage attributes to Message object.
         msg.__dict__.update(coap_msg.__dict__)
         return msg
+
+    def add_option(self, option):
+        """
+        Adds given options to the option list.
+        """
+        self.coap_option.append(option)
+
+    def find_option(self, option_number):
+        """
+        Returns given option_number in the current message and returns result as a list.
+        """
+        return filter(lambda option:option.option_number == option_number, self.coap_option)
+
+    def remove_option(self, option_number):
+        """
+        Removes the given option(by options number) from the option list.
+        Note - If more than one option found for the given option number, all of them are removed.
+        """
+        for index, option in enumerate(self.coap_option):
+            if option.option_number == option_number:
+                del self.coap_option[index]
 
 
 class MessageIdGenerator():
