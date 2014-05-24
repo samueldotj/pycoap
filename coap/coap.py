@@ -12,7 +12,7 @@ import socket
 import logging
 import asyncore
 
-from code_registry import MethodCode, MessageType, OptionNumber
+from code_registry import MethodCode, MessageType, OptionNumber, ResponseCodeClass
 import message
 from message import Message, Option, MessageState, MessageStatus
 
@@ -202,10 +202,10 @@ class Coap(asyncore.dispatcher):
 
         if msg.class_code == 0 and msg.class_detail == 0:
             # if this is empty message send just for ACK we are already done.
-            logging.debug('Separate ACK {0}'.format(str(msg)))
+            logging.debug('Separate ACK')
             return
         else:
-            logging.debug('Piggybacked RESPONSE {0}'.format(str(msg)))
+            logging.debug('Piggybacked RESPONSE')
            # This message has a piggybacked response, so receive it.
             self._receive_response(parent_msg, msg)
 
@@ -215,25 +215,88 @@ class Coap(asyncore.dispatcher):
         self._remove_message(req_msg)
         req_msg.server_reply_list.append(resp_msg)
 
-        block2_options = resp_msg.find_option(OptionNumber.block2)
-        if len(block2_options) > 0:
-            self._receive_block_response(req_msg, resp_msg, block2_options)
-        else:
-            # wake up threads waiting for this message
+        # if error received then fail immediately.
+        if resp_msg.class_code != ResponseCodeClass.success:
             req_msg.transaction_complete_event.set()
+            return
 
-    def _receive_block_response(self, req_msg, resp_msg, block2_options):
-        """Receives a BLOCK2 response.
+        # handle block options separately.
+        if self._receive_block_response(req_msg, resp_msg):
+            return
+
+        # wake up threads waiting for this message
+        req_msg.transaction_complete_event.set()
+
+    def _receive_block_response(self, req_msg, resp_msg):
+        """Receives a response with block option(s) set.
+           Returns True if the message is processed and no more processing is required.
         """
+        block1_options = resp_msg.find_option(OptionNumber.block1)
+        block2_options = resp_msg.find_option(OptionNumber.block2)
+        if len(block1_options) == 0 and len(block2_options) == 0:
+            return False
+
+        if len(block1_options) > 1:
+            logging.warning('Multiple BLOCK1 options found in response - ignoring everything else but first')
         if len(block2_options) > 1:
             logging.warning('Multiple BLOCK2 options found in response - ignoring everything else but first')
 
-        block_number, more, size = Option.block_value_decode(block2_options[0].value)
-        logging.debug('Block2 response received NUM {0} More {1} Size {2}'.format(block_number, more, size))
-        if more:
-            #send request to fetch next block, reuse the same request(change block2 option and msg_id)
+        if len(block1_options) > 0 and len(block2_options) > 0:
+            logging.error('BLOCK1 + BLOCK2 in a single response is not yet implemented.')
+        elif len(block1_options) > 0:
+            self._receive_block1_response(req_msg, resp_msg, block1_options[0])
+        elif len(block2_options) > 0:
+            self._receive_block2_response(req_msg, resp_msg, block2_options[0])
+
+        return True
+
+    def _receive_block1_response(self, req_msg, resp_msg, req_block1_option):
+        """ Handles a Block1 option in the response message
+        """
+        last_block_number, m_bit, pref_max_size = Option.block_value_decode(req_block1_option.value)
+        logging.debug('Block1 response received - block_number={0} m_bit={1} size={2}'.format(last_block_number, m_bit, pref_max_size))
+        if resp_msg.type not in [MethodCode.post, MethodCode.put]:
+            logging.error('BLOCK1 message with invalid method code - Ignoring')
+            return
+
+        block_number = last_block_number + 1
+        req_msg.block1_preferred_size = pref_max_size
+        payload_size = len(req_msg.block1_payload)
+        total_blocks = (payload_size / pref_max_size) + 1
+        more = block_number < total_blocks
+        payload_start = last_block_number * pref_max_size
+        cur_payload = req_msg.block1_payload[payload_start:payload_start + pref_max_size]
+        logging.debug('total {0} last {1} more {2}'.format(total_blocks, block_number, more))
+        if ((last_block_number * pref_max_size) + len(cur_payload)) <= payload_size:
+            #send request with next post/put request, reuse the same message(change block1 option and msg_id)
+            req_msg.remove_option(OptionNumber.block1)
             req_msg.remove_option(OptionNumber.block2)
-            block2_option = Option(OptionNumber.block2, Option.block_value_encode(block_number + 1, True, size))
+            block1_option = Option(OptionNumber.block1, Option.block_value_encode(block_number, more, pref_max_size))
+            req_msg.add_option(block1_option)
+
+            logging.debug('original  payload size {0} this block = {1}'.format(len(req_msg.block1_payload), cur_payload))
+            req_msg.set_payload(cur_payload)
+
+            req_msg.recycle(self._id_generator.get_next_id())
+            self._transition_message(req_msg, MessageState.wait_for_send)
+        else:
+            # All blocks are send, so lets wake up the caller
+            req_msg.transaction_complete_event.set()
+
+    def _receive_block2_response(self, req_msg, resp_msg, block2_option):
+        """ Handles a Block2 option in the response message
+        """
+        block_number, more, size = Option.block_value_decode(block2_option.value)
+        logging.debug('Block2 response received - block_number={0} m_bit={1} size={2}'.format(block_number, more, size))
+        if resp_msg.type != MethodCode.get:
+            logging.error('BLOCK2 message with invalid method code.')
+            return
+
+        if more:
+            #send request to fetch next block, reuse the same message(change block2 option and msg_id)
+            req_msg.remove_option(OptionNumber.block1)
+            req_msg.remove_option(OptionNumber.block2)
+            block2_option = Option(OptionNumber.block2, Option.block_value_encode(block_number + 1, False, size))
             req_msg.add_option(block2_option)
 
             req_msg.recycle(self._id_generator.get_next_id())
@@ -254,7 +317,9 @@ class Coap(asyncore.dispatcher):
         unsupported_options = list(filter((lambda opt: opt and opt.option_number not in implemented_options), msg.coap_option))
         unsupported_critical_options = list(filter((lambda opt: (opt.option_number % 2) == 1), unsupported_options))
         if len(unsupported_critical_options) > 0:
-            logging.warning('Unsupported critical option received - Sending RESET for {0}'.format(str(msg)))
+            for opt in unsupported_critical_options:
+                logging.warning('Unsupported critical option {0}'.format(opt.option_number))
+            logging.warning('Sending RESET for {0}'.format(str(msg)))
             reset_msg = Message(message_id=msg.message_id, message_type=MessageType.reset)
             self.send(reset_msg.build())
             return
@@ -331,7 +396,7 @@ class Coap(asyncore.dispatcher):
 
     # ------------ asyncore handlers end --------------------------
 
-    def _request(self, method_code, uri_path, confirmable, options, payload=None, timeout=None):
+    def _request(self, method_code, uri_path, confirmable, options, payload=None, timeout=None, block1_size=128):
         """ Creates a CoAP request message and puts it in the state machine.
         """
         if options is None:
@@ -341,9 +406,20 @@ class Coap(asyncore.dispatcher):
             options.append(option)
         message_type = MessageType.confirmable if confirmable else MessageType.non_confirmable
 
+        #Use default block size if no preferred block size is provided.
+        if payload and len(payload) > message.block_max_size and block1_size == 0:
+            block1_size = 128
+
+        # Add block1 option if required
+        if method_code in [MethodCode.post, MethodCode.put] and payload and len(payload) > block1_size:
+            option = Option(OptionNumber.block1, Option.block_value_encode(0, len(payload) > block1_size, block1_size))
+            options.append(option)
+
         # create a new message
         message_id = self._id_generator.get_next_id()
-        msg = Message(message_id=message_id, class_detail=method_code, message_type=message_type, options=options, payload=payload)
+        msg = Message(message_id=message_id, class_detail=method_code, message_type=message_type, options=options,
+                      payload=payload, block1_size=block1_size)
+
         # add to the transmitter queue and wakeup the transmitter to do the processing
         msg.transaction_complete_event.clear()
         self._transition_message(msg, MessageState.wait_for_send)
@@ -360,11 +436,11 @@ class Coap(asyncore.dispatcher):
 
     def put(self, uri_path, confirmable=True, options=None, payload=None):
         """ CoAP PUT Request """
-        return self._request(method_code=MethodCode.put, uri_path=uri_path, confirmable=confirmable, options=options)
+        return self._request(method_code=MethodCode.put, uri_path=uri_path, confirmable=confirmable, options=options, payload=payload)
 
     def post(self, uri_path, confirmable=True, options=None, payload=None):
         """ CoAP POST Request """
-        return self._request(method_code=MethodCode.post, uri_path=uri_path, confirmable=confirmable, options=options)
+        return self._request(method_code=MethodCode.post, uri_path=uri_path, confirmable=confirmable, options=options, payload=payload)
 
     def delete(self, uri_path, confirmable=True, options=None):
         """ CoAP DELETE Request """
@@ -381,16 +457,18 @@ class CoapResult:
         self.status = request_msg.status
         if response_msg:
             self.response_code = response_msg.class_code << 5 | response_msg.class_detail
-            self.payload = ''
+            self.payload = bytearray()
             for msg in request_msg.server_reply_list:
-                self.payload += bytearray(msg.payload.value)
+                if msg.payload != '':
+                    self.payload += bytearray(msg.payload.value)
             self.options = response_msg.coap_option
         else:
             self.response_code = 0
             self.payload = bytearray()
             self.options = []
 
-def request(coap_url, method=MethodCode.get):
+
+def request(coap_url, method=MethodCode.get, payload=None):
     """ A wrapper to make a single request.
 
     Example - coap.request('coap://coap.me/hello')
@@ -401,7 +479,14 @@ def request(coap_url, method=MethodCode.get):
         raise Exception('Not a CoAP URI')
 
     c = Coap(host=url.hostname, port=url.port if url.port else COAP_DEFAULT_PORT)
-    assert method == MethodCode.get
-    result = c.get(url.path[1:])
+    if method == MethodCode.get:
+        result = c.get(url.path[1:])
+    elif method == MethodCode.post:
+        result = c.post(url.path[1:], payload=payload)
+    elif method == MethodCode.put:
+        result = c.put(url.path[1:], payload=payload)
+    elif method == MethodCode.delete:
+        result = c.delete(url.path[1:])
     c.destroy()
+
     return result

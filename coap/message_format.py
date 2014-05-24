@@ -95,6 +95,17 @@ class CoapOption:
             else:
                 return TWO_BYTE_MARKER, length - TWO_BYTE_START
 
+    @staticmethod
+    def _len_ext_to_value(delta, delta_ext):
+        """ Returns length for given delta and delta_ext.
+        """
+        if delta == ONE_BYTE_MARKER:
+            return ONE_BYTE_START + delta_ext
+        elif delta == TWO_BYTE_MARKER:
+            return TWO_BYTE_START + delta_ext
+        else:
+            return delta
+
     def fix_option_number(self, last_option_number):
         """ Fix delta and delta_ext fields in the option based on the last option.
         """
@@ -108,15 +119,14 @@ class CoapOption:
     @staticmethod
     def parse(data, last_option_number=0):
         cont = coap_option.parse(data)
-        con = CoapOption(option_number=last_option_number + cont.delta, option_value=cont.value)
+        option_number = CoapOption._len_ext_to_value(cont.delta, cont.delta_extended)
+        con = CoapOption(option_number=last_option_number + option_number, option_value=cont.value)
         # overwrite the calculated values with read value
         con.__dict__.update(cont)
         return con
 
     def __str__(self):
-        return 'delta = {delta} value={value} length={length} delta_ext={delta_ext} length_ext={length_ext}'\
-            .format(delta=self.option_number, value=self.value, length=self.length,
-                    delta_ext=self.delta_extended, length_ext=self.length_extended)
+        return 'option_no={no} length={length}' .format(no=self.option_number, length=self.length)
 
     def __eq__(self, other):
         if isinstance(other, CoapOption):
@@ -147,11 +157,15 @@ class CoapMessage:
         self.token_length = token_length
         self.token = token
         self.coap_option = options
-        self.payload = payload if payload is not None else ''
-        if len(self.payload) > 0:
+        self.set_payload(payload)
+
+    def set_payload(self, payload):
+        if payload and len(payload) > 0:
             self.payload_marker = PAYLOAD_MARK
+            self.payload = Container(marker=PAYLOAD_MARK, value=bytearray(payload))
         else:
             self.payload_marker = 0
+            self.payload = Container(marker=0, value='')
 
     def build(self):
         """ Returns CoAP message as a bytearray.
@@ -175,13 +189,18 @@ class CoapMessage:
             options.append(option)
             last_option_number = options[-1].option_number
 
+        payload = msg.payload.value if msg.payload else None
+
         return CoapMessage(version=msg.version, message_type=msg.type, message_id=msg.message_id,
                            class_code=msg.class_code, class_detail=msg.class_detail,
                            token_length=msg.token_length, token=msg.token, options=options,
-                           payload=msg.payload)
+                           payload=payload)
 
     def __str__(self):
-        return 'id={id} token={token} type={type} code={code}.{detail}'.format(id=self.message_id, token=self.token,
-                                                                               type=self.type, code=self.class_code,
-                                                                               detail=self.class_detail)
+        options_str = ''
+        for option in self.coap_option:
+            options_str += ' \n {0}'.format(str(option))
+        return 'id={id} token={token} type={type} code={code}.{detail} payload length={len}{options}'\
+            .format(id=self.message_id, token=self.token, type=self.type, code=self.class_code,
+                    detail=self.class_detail, len=len(self.payload.value), options=options_str)
 

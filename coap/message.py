@@ -18,6 +18,11 @@ COAP_ACK_TIMEOUT = 2
 COAP_ACK_RANDOM_FACTOR = 1.5
 COAP_MAX_RETRANSMIT = 4
 
+"""Possible block payload sizes"""
+block_sizes = [16, 32, 64, 128, 256, 512, 1024]
+block_min_size = 16
+block_max_size = 1024
+
 
 class MessageState(int, Enum):
     """ State machine states
@@ -53,12 +58,11 @@ class Option(CoapOption):
         """
         Encodes given block number, more and size to form a CoAP block option value as byte string.
         """
-        sizes = [16, 32, 64, 128, 256, 512, 1024]
-        if size > 1024:
+        if size > block_max_size:
             raise 'Invalid size {0}'.format(size)
 
         m = 1 if more else 0
-        for szx, s in enumerate(sizes):
+        for szx, s in enumerate(block_sizes):
             if size <= s:
                 break
 
@@ -102,12 +106,25 @@ class Message(CoapMessage):
     """ Subclass of CoapMessage to provide additional services(such as timeout, retransmission)
     """
     def __init__(self, message_id=0, message_type=MessageType.confirmable, class_code=0, class_detail=0,
-                 token='', options=None, payload=None):
+                 token='', options=None, payload=None, block1_size=0):
+
+        assert payload is None or block1_size in block_sizes
+
         if options is None:
             options = []
+
+        """Original payload which should be send to server(through PUT/POST request)"""
+        self.block1_payload = payload
+        """Preferred block size should be used in block1 request"""
+        self.block1_preferred_size = block1_size
+
+        """Payload for this trip"""
+        if payload and len(payload) > block1_size:
+            payload = payload[:block1_size]
+
         CoapMessage.__init__(self, version=COAP_VERSION, message_type=message_type, message_id=message_id,
                              class_code=class_code, class_detail=class_detail,
-                             token=token, token_length=len(token), options=options, payload=payload if payload else '')
+                             token=token, token_length=len(token), options=options, payload=payload)
 
         #assert token is None or type(token) is bytearray
         assert self.token_length in [0, 1, 2, 4, 8]

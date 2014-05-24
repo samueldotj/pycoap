@@ -51,8 +51,6 @@ def verify_coap_message(bin_data,  message_type, message_id, class_code, class_d
     if token is None:
         token = ''
     token_length = len(token)
-    if payload is None:
-        payload = ''
     #Build an option with given arguments and verify it
     msg = CoapMessage(version=1, message_type=message_type, message_id=message_id, class_code=class_code,
                       class_detail=class_detail, token=token, token_length=token_length, options=options, payload=payload)
@@ -70,10 +68,8 @@ def verify_coap_message(bin_data,  message_type, message_id, class_code, class_d
         msg_options = msg.coap_option
         assert len(msg_options) == len(options)
         for idx, opt in enumerate(options):
-            print str(opt)
             assert msg_options[idx] == opt
-    assert msg.payload == payload
-
+    assert msg.payload.value == payload or (msg.payload.value == '' and payload is None)
 
 def test_build_coap_message():
     #acknowledgment with empty message.
@@ -85,6 +81,12 @@ def test_build_coap_message():
     verify_coap_message('@\x01\x01\x00\xb5hello',
                         message_type=MessageType.confirmable, message_id=0x100, class_code=0, class_detail=MethodCode.get,
                         token='', payload=None,
+                        options=[CoapOption(option_number=OptionNumber.uri_path, option_value='hello')])
+
+    #simple PUT request with payload
+    verify_coap_message('@\x01\x01\x00\xb5hello\xffworld',
+                        message_type=MessageType.confirmable, message_id=0x100, class_code=0, class_detail=MethodCode.get,
+                        token='', payload='world',
                         options=[CoapOption(option_number=OptionNumber.uri_path, option_value='hello')])
 
     #simple GET request with token

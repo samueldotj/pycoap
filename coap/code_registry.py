@@ -19,6 +19,12 @@ class MethodCode(int, Enum):
     delete = 4
 
 
+class ResponseCodeClass(int, Enum):
+    success = 2
+    client_error = 4
+    server_error = 5
+
+
 class ResponseCode(int, Enum):
     ok = 0x40
     created = 0x41
@@ -26,6 +32,7 @@ class ResponseCode(int, Enum):
     valid = 0x43
     changed = 0x44
     content = 0x45
+    block_continue = 0x5f
 
     bad_request = 0x80
     unauthorized = 0x81
@@ -35,6 +42,7 @@ class ResponseCode(int, Enum):
     method_not_allowed = 0x85
     not_acceptable = 0x86
     precondition_failed = 0x8c
+    incomplete = 0x88
     request_entity_too_large = 0x8d
     unsupported_content_format = 0x8f
 
