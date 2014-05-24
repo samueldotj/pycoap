@@ -1,3 +1,7 @@
+"""
+Kind of unit tests for CoAP messages.
+"""
+
 import binascii
 from ..code_registry import OptionNumber, MessageType, MethodCode
 from ..message import CoapMessage, CoapOption
@@ -30,17 +34,23 @@ def verify_coap_option(bin_data, option_number, option_value):
     assert calc_opt_number == option_number
 
 
-def test_coap_option():
+def test_coap_option_basic():
     # Basic test case to verify CoAP option for URI path works.
     verify_coap_option('\xb4test', OptionNumber.uri_path, 'test')
     verify_coap_option('\xcbtext/plain;', OptionNumber.content_format, 'text/plain;')
 
+
+def test_coap_option_long_uri():
     # This test will build an option with very long value and verifies length_extended field is used.
     verify_coap_option('\xbd\x0fthis_is_a_very_long_uri_path', OptionNumber.uri_path, 'this_is_a_very_long_uri_path')
 
+
+def test_coap_option_two_byte_number():
     # This test will build an option with option number > 12 to test delta_extended field.
     verify_coap_option('\xda\x07correct_me', OptionNumber.location_query, 'correct_me')
 
+
+def test_coap_option_two_byte_value():
     # This test will build an option with option number > 12 to test delta_extended field.
     verify_coap_option('\xdd\x07\x02very_long_value', OptionNumber.location_query, 'very_long_value')
 
@@ -71,24 +81,31 @@ def verify_coap_message(bin_data,  message_type, message_id, class_code, class_d
             assert msg_options[idx] == opt
     assert msg.payload.value == payload or (msg.payload.value == '' and payload is None)
 
-def test_build_coap_message():
+
+def test_coap_message_ack():
     #acknowledgment with empty message.
     verify_coap_message('`\x01\xab\xcd',
                         message_type=MessageType.acknowledgment, message_id=0xabcd, class_code=0, class_detail=MethodCode.get,
                         token='', payload=None, options=[])
 
+
+def test_coap_message_get():
     #simple GET request
     verify_coap_message('@\x01\x01\x00\xb5hello',
                         message_type=MessageType.confirmable, message_id=0x100, class_code=0, class_detail=MethodCode.get,
                         token='', payload=None,
                         options=[CoapOption(option_number=OptionNumber.uri_path, option_value='hello')])
 
+
+def test_coap_message_put():
     #simple PUT request with payload
     verify_coap_message('@\x01\x01\x00\xb5hello\xffworld',
                         message_type=MessageType.confirmable, message_id=0x100, class_code=0, class_detail=MethodCode.get,
                         token='', payload='world',
                         options=[CoapOption(option_number=OptionNumber.uri_path, option_value='hello')])
 
+
+def test_coap_message_token():
     #simple GET request with token
     verify_coap_message('H\x01\x01\x001234abcd\xbd\x01check_my_token',
                         message_type=MessageType.confirmable, message_id=0x100, class_code=0, class_detail=MethodCode.get,
