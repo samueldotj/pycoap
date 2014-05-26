@@ -76,7 +76,7 @@ class Coap(asyncore.dispatcher):
 
     def destroy(self):
         """ Stops the threads started by this class. """
-        logging.info('Stopping threads')
+        logging.debug('Stopping threads')
         self._stop_requested = True
 
         self.close()
@@ -120,13 +120,15 @@ class Coap(asyncore.dispatcher):
 
             # Receive messages
             messages = self.message_queues[MessageState.to_be_received]
-            logging.debug('FSM - Receive messages {0}'.format(len(messages)))
+            if len(messages) > 0:
+                logging.debug('FSM - Receiving {0} messages'.format(len(messages)))
             for msg in messages:
                 self._receive_message(msg)
 
             # Send all messages in the send queue
             messages = self.message_queues[MessageState.wait_for_send]
-            logging.debug('FSM - Send messages {0}'.format(len(messages)))
+            if len(messages) > 0:
+                logging.debug('FSM - Sending {0} messages'.format(len(messages)))
             for msg in messages:
                 self._send_message(msg)
 
@@ -190,23 +192,23 @@ class Coap(asyncore.dispatcher):
 
         idx, parent_msg = self._find_message(token=None, message_id=msg.message_id, state=MessageState.wait_for_ack)
         if parent_msg is None:
-            logging.warning('ACK received but no matching message found - Sending RESET for {0}'.format(str(msg)))
+            logging.warning('ACK received but no matching message found - Sending RESET')
             reset_msg = Message(message_id=msg.message_id, message_type=MessageType.reset)
             self.send(reset_msg.build())
             return
         if parent_msg.type != MessageType.confirmable:
-            logging.error('ACK received for message which is not expecting it - ignoring {0}'.format(str(msg)))
+            logging.error('ACK received for NON-CONFIRMABLE message - Ignoring')
             return
 
         self._transition_message(parent_msg, MessageState.wait_for_response)
 
         if msg.class_code == 0 and msg.class_detail == 0:
             # if this is empty message send just for ACK we are already done.
-            logging.debug('Separate ACK')
+            logging.debug('Separate ACK received')
             return
         else:
-            logging.debug('Piggybacked RESPONSE')
-           # This message has a piggybacked response, so receive it.
+            logging.debug('ACK + RESPONSE received')
+            # This message has a piggybacked response, so receive it.
             self._receive_response(parent_msg, msg)
 
     def _receive_response(self, req_msg, resp_msg):
@@ -254,7 +256,7 @@ class Coap(asyncore.dispatcher):
         """ Handles a Block1 option in the response message
         """
         last_block_number, m_bit, pref_max_size = Option.block_value_decode(req_block1_option.value)
-        logging.debug('Block1 response received - block_number={0} m_bit={1} size={2}'.format(last_block_number, m_bit, pref_max_size))
+        logging.debug('Block1 response: block_number={0} m_bit={1} size={2}'.format(last_block_number, m_bit, pref_max_size))
         if resp_msg.type not in [MethodCode.post, MethodCode.put]:
             logging.error('BLOCK1 message with invalid method code - Ignoring')
             return
@@ -266,7 +268,6 @@ class Coap(asyncore.dispatcher):
         more = block_number < total_blocks
         payload_start = last_block_number * pref_max_size
         cur_payload = req_msg.block1_payload[payload_start:payload_start + pref_max_size]
-        logging.debug('total {0} last {1} more {2}'.format(total_blocks, block_number, more))
         if ((last_block_number * pref_max_size) + len(cur_payload)) <= payload_size:
             #send request with next post/put request, reuse the same message(change block1 option and msg_id)
             req_msg.remove_option(OptionNumber.block1)
@@ -274,7 +275,6 @@ class Coap(asyncore.dispatcher):
             block1_option = Option(OptionNumber.block1, Option.block_value_encode(block_number, more, pref_max_size))
             req_msg.add_option(block1_option)
 
-            logging.debug('original  payload size {0} this block = {1}'.format(len(req_msg.block1_payload), cur_payload))
             req_msg.set_payload(cur_payload)
 
             req_msg.recycle(self._id_generator.get_next_id())
@@ -287,7 +287,7 @@ class Coap(asyncore.dispatcher):
         """ Handles a Block2 option in the response message
         """
         block_number, more, size = Option.block_value_decode(block2_option.value)
-        logging.debug('Block2 response received - block_number={0} m_bit={1} size={2}'.format(block_number, more, size))
+        logging.debug('Block2 response: block_number={0} m_bit={1} size={2}'.format(block_number, more, size))
         if resp_msg.type != MethodCode.get:
             logging.error('BLOCK2 message with invalid method code.')
             return
@@ -371,6 +371,7 @@ class Coap(asyncore.dispatcher):
         """
         assert msg.get_timeout() <= 0
         if msg.retransmission_counter < message.COAP_MAX_RETRANSMIT:
+            logging.info('Retransmitting message {0}'.format(str(msg)))
             self._transition_message(msg, MessageState.wait_for_send)
             return
 
@@ -380,7 +381,7 @@ class Coap(asyncore.dispatcher):
         elif msg.state == MessageState.wait_for_response:
             msg.status = MessageStatus.response_timeout
 
-        logging.log('TIMEOUT - Removing message {0}'.format(str(msg)))
+        logging.error('TIMEOUT - Removing message {0}'.format(str(msg)))
         self._remove_message(msg)
         msg.transaction_complete_event.set()
 
