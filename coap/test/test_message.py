@@ -54,6 +54,8 @@ def test_coap_option_two_byte_value():
     # This test will build an option with option number > 12 to test delta_extended field.
     verify_coap_option('\xdd\x07\x02very_long_value', OptionNumber.location_query, 'very_long_value')
 
+    verify_coap_option('\x61\x00',OptionNumber.observe, '\x00')
+
 
 def verify_coap_message(bin_data,  message_type, message_id, class_code, class_detail, token, options, payload):
     """ Helper function to verify CoapMessage works for the given arguments.
@@ -111,4 +113,8 @@ def test_coap_message_token():
                         message_type=MessageType.confirmable, message_id=0x100, class_code=0, class_detail=MethodCode.get,
                         token='1234abcd', payload=None,
                         options=[CoapOption(option_number=OptionNumber.uri_path, option_value='check_my_token')])
-
+    #simple GET request with observe
+    verify_coap_message('H\x01\x01\x001234abcd\x61\x00',message_type=MessageType.confirmable,
+                        message_id=0x100, class_code=0, class_detail=MethodCode.get,
+                        token='1234abcd', payload=None,options=[CoapOption(option_number=OptionNumber.observe,
+                        option_value='\x00')])

@@ -62,6 +62,7 @@ class OptionNumber(int, Enum):
     if_none_match = 5
     uri_port = 7
     location_path = 8
+    observe = 6
     uri_path = 11
     content_format = 12
     max_age = 14
@@ -71,6 +72,7 @@ class OptionNumber(int, Enum):
     block2 = 23
     block1 = 27
     proxy_uri = 35
+    size1 = 36
     proxy_scheme = 39
     max = 1000
 

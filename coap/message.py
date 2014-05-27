@@ -9,7 +9,7 @@ from enum import Enum
 from datetime import datetime
 
 from message_format import CoapMessage, CoapOption
-from code_registry import MessageType
+from code_registry import MessageType , OptionNumber
 
 COAP_VERSION = 1
 COAP_MAX_MESSAGE_ID = 0xFFFF
@@ -34,6 +34,7 @@ class MessageState(int, Enum):
     wait_for_ack = 3
     wait_for_response = 4
     wait_for_free = 5
+    wait_for_updates = 6
 
 
 class MessageStatus(int, Enum):
@@ -45,6 +46,7 @@ class MessageStatus(int, Enum):
     ack_timeout = 2
     response_timeout = 3
     reset_received = 4
+    observe_timeout = 5
 
 
 class Option(CoapOption):
@@ -155,6 +157,9 @@ class Message(CoapMessage):
         This event will be triggered once the coap message it transmitted and received a response or timeout.
         """
         self.transaction_complete_event = threading.Event()
+        
+        self.age = -1.0
+        self.url = self.get_requestURL()
 
     def recycle(self, msg_id):
         """ Recycle the given message so that it can be used to send copy/similar message again.
@@ -203,6 +208,12 @@ class Message(CoapMessage):
         Returns given option_number in the current message and returns result as a list.
         """
         return filter(lambda option:option.option_number == option_number, self.coap_option)
+    def get_requestURL(self):
+        result = ''
+        opt = self.find_option(OptionNumber.uri_path)
+        if len(opt) > 0:
+            result = opt[0].value
+        return result
 
     def remove_option(self, option_number):
         """
@@ -212,6 +223,21 @@ class Message(CoapMessage):
         for index, option in enumerate(self.coap_option):
             if option.option_number == option_number:
                 del self.coap_option[index]
+    def set_age(self):
+        opt  = self.find_option(OptionNumber.max_age)
+        if len(opt) > 0:
+            fmt = 'I'
+            if opt[0].length == 1:
+                fmt = 'B'
+            elif opt[0].length == 2:
+                fmt = 'H'
+            self.age = struct.unpack(fmt,opt[0].value)[0]
+
+    def get_time_remaining(self):
+        passed_time = (datetime.now() - self._state_change_timestamp).total_seconds()
+        if self.age != -1:
+            return  self.age - passed_time
+        return self.age
 
 
 class MessageIdGenerator():
