@@ -5,6 +5,7 @@ Functional tests for CoAP requests.
 from ..coap import request, MethodCode
 from ..code_registry import ResponseCode
 
+
 def test_simple_message():
     result = request('coap://coap.me/hello')
     assert result.payload == 'world' and result.response_code == ResponseCode.content

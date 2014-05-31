@@ -1,7 +1,7 @@
 """
 This file contains all the functions used to extend constrct library.
 """
-from construct import *
+from construct import ConstructError, Subconstruct, SizeofError
 
 
 class RepeatUntilExclude(Subconstruct):

@@ -3,7 +3,8 @@ Defines CoAP message as specified in the CoAP spec section 3.
 http://tools.ietf.org/html/draft-ietf-core-coap-18#section-3
 """
 
-from construct import *
+from construct import Struct, EmbeddedBitStruct, BitField, Switch, Byte, UBInt8, UBInt16, \
+    Pass, Field, Optional, If, OptionalGreedyRange, Peek, Embed, Container
 from construct_ext import RepeatUntilExclude
 from code_registry import OptionNumber
 
@@ -30,31 +31,28 @@ option_full = Struct('option_full',
                      EmbeddedBitStruct(
                          BitField('delta', 4),
                          BitField('length', 4)),
-                         Switch('delta_extended', lambda ctx: ctx.delta,
-                                {
-                                    ONE_BYTE_MARKER: UBInt8('value'),
-                                    TWO_BYTE_MARKER: UBInt16('value')
-                                },
-                                default=Pass),
-                         Switch('length_extended', lambda ctx: ctx.length,
-                                {
-                                    ONE_BYTE_MARKER: UBInt8('value'),
-                                    TWO_BYTE_MARKER: UBInt16('value')
-                                },
-                                default=Pass),
-                         Field('value', option_length))
+                     Switch('delta_extended', lambda ctx: ctx.delta,
+                            {
+                                ONE_BYTE_MARKER: UBInt8('value'),
+                                TWO_BYTE_MARKER: UBInt16('value')},
+                            default=Pass),
+                     Switch('length_extended', lambda ctx: ctx.length,
+                            {
+                                ONE_BYTE_MARKER: UBInt8('value'),
+                                TWO_BYTE_MARKER: UBInt16('value')
+                            },
+                            default=Pass),
+                     Field('value', option_length))
 
 # coap_option evaluates to option_full if the next byte in stream is not payload marker.
 coap_option = Struct('coap_option',
                      Optional(Peek(UBInt8("is_payload"))),
-                     If(lambda ctx: ctx.is_payload != PAYLOAD_MARK, Embed(option_full))
-                     )
+                     If(lambda ctx: ctx.is_payload != PAYLOAD_MARK, Embed(option_full)))
 
 # Defines payload marker and the following payload
 payload = Struct('payload',
                  UBInt8("marker"),
-                 OptionalGreedyRange(Byte("value"))
-                 )
+                 OptionalGreedyRange(Byte("value")))
 
 # Defines a full coap message - header + [options] + [payload_marker, payload]
 coap_message = Struct('coap_message',
@@ -62,21 +60,18 @@ coap_message = Struct('coap_message',
                                         BitField('type', 2),
                                         BitField('token_length', 4),
                                         BitField('class_code', 3),
-                                        BitField('class_detail', 5),
-                                        ),
+                                        BitField('class_detail', 5),),
                       UBInt16('message_id'),
                       Field('token', lambda ctx: ctx.token_length),
 
                       RepeatUntilExclude(lambda obj, ctx: obj is None or obj.is_payload == PAYLOAD_MARK, Optional(coap_option)),
 
                       Optional(Peek(UBInt8("payload_marker"))),
-                      If(lambda ctx: ctx.payload_marker == PAYLOAD_MARK, payload)
-                      )
+                      If(lambda ctx: ctx.payload_marker == PAYLOAD_MARK, payload))
 
 
-class CoapOption:
-    """ Container for CoAP option construct.
-    """
+class CoapOption():
+    """ Container for CoAP option construct."""
     def __init__(self, option_number, option_value, last_option_number=0):
         self.option_number = option_number
         self.value = option_value
@@ -85,8 +80,7 @@ class CoapOption:
         self.is_payload = 0
 
     def _value_to_len_ext(self, length):
-        """ Returns delta and delta_ext for a given length.
-        """
+        """ Returns delta and delta_ext for a given length."""
         if length <= 12:
             return length, None
         else:
@@ -97,8 +91,7 @@ class CoapOption:
 
     @staticmethod
     def _len_ext_to_value(delta, delta_ext):
-        """ Returns length for given delta and delta_ext.
-        """
+        """ Returns length for given delta and delta_ext."""
         if delta == ONE_BYTE_MARKER:
             return ONE_BYTE_START + delta_ext
         elif delta == TWO_BYTE_MARKER:
@@ -107,13 +100,11 @@ class CoapOption:
             return delta
 
     def fix_option_number(self, last_option_number):
-        """ Fix delta and delta_ext fields in the option based on the last option.
-        """
+        """ Fix delta and delta_ext fields in the option based on the last option."""
         self.delta, self.delta_extended = self._value_to_len_ext(self.option_number - last_option_number)
 
     def build(self):
-        """ Returns CoAP option as a bytearray.
-        """
+        """ Returns CoAP option as a bytearray."""
         return option_full.build(self)
 
     @staticmethod
@@ -142,9 +133,8 @@ class CoapOption:
             raise Exception('Can not compare {0} with {1}'.format(type(self), type(other)))
 
 
-class CoapMessage:
-    """ Container for coap message construct.
-    """
+class CoapMessage():
+    """ Container for coap message construct."""
     def __init__(self, version=0, message_type=0, class_code=0, class_detail=0, message_id=0,
                  token_length=0, token='', options=None, payload=''):
         if options is None:

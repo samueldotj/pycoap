@@ -1,5 +1,4 @@
-"""
-This file implements passing Coap Requests and Responses between server and client.
+""" This file implements passing Coap Requests and Responses between server and client.
 
 There is a simple state machine which maintains the message states such as ACK, RST. This state machine runs as
 a separate thread(_fsm_loop).
@@ -7,23 +6,23 @@ a separate thread(_fsm_loop).
 asyncore is used for UDP socket options. asyncore runs as a separate thread(_asyncore_loop) to handle
 sock receive and send operations. Currently asyncore is mainly used for asynchronous sock.recv().
 """
+
 import threading
 import socket
 import logging
 import asyncore
 
-from code_registry import MethodCode, MessageType, OptionNumber, ResponseCodeClass ,ResponseCode
-import message
-from message import Message, Option, MessageState, MessageStatus ,CoapOption
+from code_registry import MethodCode, MessageType, OptionNumber, ResponseCodeClass
+from message import Message, Option, MessageState, MessageStatus, CoapOption, \
+    SequenceMessageIdGenerator, SequenceTokenGenerator, COAP_MAX_RETRANSMIT, COAP_BLOCK_MAX_SIZE
 import copy
-COAP_DEFAULT_PORT = 5683
 
+COAP_DEFAULT_PORT = 5683
 UDP_RECEIVE_BUFFER_SIZE = 2048
 DEFAULT_REQUEST_TIMEOUT = 5
 
 
-""" Implemented CoAP options, any other options would result in reset message(if it is a critical option).
-"""
+""" Implemented CoAP options, any other options would result in reset message(if it is a critical option)."""
 implemented_options = [
     OptionNumber.observe,
     OptionNumber.uri_host,
@@ -37,11 +36,10 @@ implemented_options = [
 
 
 class Coap(asyncore.dispatcher):
-    """ Manages CoAP request to a server.
-    """
+    """ Manages CoAP request to a server."""
     def __init__(self, host, port=COAP_DEFAULT_PORT, timeout=DEFAULT_REQUEST_TIMEOUT,
-                 message_id_generator=message.SequenceMessageIdGenerator(),
-                 token_generator=message.SequenceTokenGenerator(token_length=2), observer=None):
+                 message_id_generator=SequenceMessageIdGenerator(),
+                 token_generator=SequenceTokenGenerator(token_length=2)):
         asyncore.dispatcher.__init__(self)
 
         # decode the given host name and create a socket out of it.
@@ -93,8 +91,7 @@ class Coap(asyncore.dispatcher):
         asyncore.loop()
 
     def _get_next_timeout(self):
-        """
-        Returns the when the next timeout event should fire(in seconds).
+        """ Returns the when the next timeout event should fire(in seconds).
         Since the message_queue is arranged in the same order as the messages are arrived, the last entry in the message
         should have less timeout value. So this function will take the least of timeout from last element in the list.
         """
@@ -108,16 +105,15 @@ class Coap(asyncore.dispatcher):
         updates = MessageState.wait_for_updates
         if len(self.message_queues[updates]) > 0:
             logging.debug('FSM - Wwait Q has  {0}'.format(len(self.message_queues[updates])))
-            for obsmsg in self.message_queues[updates]:
-                timeout = obsmsg.get_time_remaining()
+            for msg in self.message_queues[updates]:
+                timeout = msg.get_time_remaining()
                 if timeout < result or result == 0:
                     result = timeout
 
         return result
 
     def _fsm_loop(self):
-        """
-        The main state machine loop.
+        """ The main state machine loop.
         The loop would block if there nothing to be done.
         """
         while True:
@@ -150,26 +146,24 @@ class Coap(asyncore.dispatcher):
             for state in [MessageState.wait_for_ack, MessageState.wait_for_response, MessageState.wait_for_send]:
                 for msg in reversed(self.message_queues[state]):
                     # check how long we have before the timeout.
-                    timeout = msg.get_timeout()
-                    if timeout > 0:
+                    if msg.get_timeout() > 0:
                         # since the list ordered by the message arrival there is no need to check further
                         break
                     self._timeout_message(msg)
-            # handle maxAge of observe values , if maxage is reached, we need to remove these values from wait_for_updates queue
-            updates = MessageState.wait_for_updates
-            if len(self.message_queues[updates]) > 0:
-                for obsmsg in self.message_queues[updates]:
-                    age = obsmsg.get_time_remaining()
-                    if age < 0:
-                        logging.debug('time out from wait Q')
-                        self._timeout_message(obsmsg)
+
+            # Handle maxAge of observe values, if maxage is reached, we need to remove these values from wait_for_updates queue
+            for msg in self.message_queues[MessageState.wait_for_updates]:
+                if msg.get_time_remaining() > 0:
+                    continue
+                logging.debug('time out from wait Q')
+                self._timeout_message(msg)
 
             if self._stop_requested:
                 logging.debug('FSM - Terminating because stop requested')
                 return
 
     def _find_message(self, token, message_id, state):
-        """Returns the message with given token and message_id.
+        """ Returns the message with given token and message_id.
 
         Searches for a matching message in the given message list(based on state).
         If found it returns the list index and message itself.
@@ -182,7 +176,7 @@ class Coap(asyncore.dispatcher):
         return None, None
 
     def _remove_message(self, msg):
-        """Removes the given message from the state machine.
+        """ Removes the given message from the state machine.
 
         Searches given message in the state machine lists.
         If found removes the message from the state machine and returns True.
@@ -196,7 +190,7 @@ class Coap(asyncore.dispatcher):
         return False
 
     def _transition_message(self, msg, new_state):
-        """Transitions a message to a new state.
+        """ Transitions a message to a new state.
 
         Changes the message state and also moves the message new state list.
         If the message is not found in the state machine then it would throw an exception.
@@ -230,12 +224,12 @@ class Coap(asyncore.dispatcher):
             return
         else:
             #logging.debug('Piggybacked RESPONSE {0}'.format(str(msg)))
-            self._add_to_observe(msg , ack = True , parent_msg=parent_msg)
+            self._add_to_observe(msg, ack=True, parent_msg=parent_msg)
             # This message has a piggybacked response, so receive it.
             self._receive_response(parent_msg, msg)
 
     def _receive_response(self, req_msg, resp_msg):
-        """Receives a response
+        """ Receives a response
         """
         self._remove_message(req_msg)
         req_msg.server_reply_list.append(resp_msg)
@@ -253,8 +247,8 @@ class Coap(asyncore.dispatcher):
         req_msg.transaction_complete_event.set()
 
     def _receive_block_response(self, req_msg, resp_msg):
-        """Receives a response with block option(s) set.
-           Returns True if the message is processed and no more processing is required.
+        """ Receives a response with block option(s) set.
+            Returns True if the message is processed and no more processing is required.
         """
         block1_options = resp_msg.find_option(OptionNumber.block1)
         block2_options = resp_msg.find_option(OptionNumber.block2)
@@ -329,16 +323,18 @@ class Coap(asyncore.dispatcher):
             req_msg.transaction_complete_event.set()
 
     def _receive_message(self, msg):
-        """Handles a received COAP message.
+        """ Handles a received COAP message.
 
-           The state machine calls this function to process a received a CoAP message.
+            The state machine calls this function to process a received a CoAP message.
         """
         logging.info('Received CoAP message {0}'.format(str(msg)))
 
         # Check if any unimplemented option appears in the message.
         # If there is any critical unsupported message we should send a reset message.
-        unsupported_options = list(filter((lambda opt: opt and opt.option_number not in implemented_options), msg.coap_option))
-        unsupported_critical_options = list(filter((lambda opt: (opt.option_number % 2) == 1), unsupported_options))
+        #unsupported_options = list(filter((lambda opt: opt and opt.option_number not in implemented_options), msg.coap_option))
+        unsupported_options = [opt for opt in msg.coap_option if opt.option_number not in implemented_options]
+        unsupported_critical_options = [opt for opt in unsupported_options if opt.option_number & 1]
+        #unsupported_critical_options = list(filter((lambda opt: (opt.option_number % 2) == 1), unsupported_options))
         if len(unsupported_critical_options) > 0:
             for opt in unsupported_critical_options:
                 logging.warning('Unsupported critical option {0}'.format(opt.option_number))
@@ -365,7 +361,7 @@ class Coap(asyncore.dispatcher):
         if req_msg is None:
             # This is a new REQ
             #logging.error('REQUEST not implemented yet {0}'.format(str(msg)))
-            if len(msg.find_option(OptionNumber.observe)) >0:
+            if len(msg.find_option(OptionNumber.observe)) > 0:
                 idx, req_msg = self._find_message(token=msg.token, message_id=None, state=MessageState.wait_for_updates)
                 if req_msg is None:
                     logging.error('observe received for resource not being observed {0}'.format(str(msg)))
@@ -375,21 +371,23 @@ class Coap(asyncore.dispatcher):
                 else:
                     logging.error('observe received for resource being observed {0}'.format(str(req_msg)))
                     if msg.type == MessageType.confirmable:
-                        ack_msg = Message(message_id=msg.message_id, message_type=MessageType.acknowledgment,token = msg.token)
+                        ack_msg = Message(message_id=msg.message_id, message_type=MessageType.acknowledgment, token=msg.token)
                         self.send(ack_msg.build())
                     self._add_to_observe(msg)
         else:
             # We got the response as separate message, first send ACK if needed.
             if msg.type == MessageType.confirmable:
-                ack_msg = Message(message_id=msg.message_id, message_type=MessageType.acknowledgment,token = msg.token)
+                ack_msg = Message(message_id=msg.message_id, message_type=MessageType.acknowledgment, token=msg.token)
                 self.send(ack_msg.build())
 
             #if message has observe option set , the server will send updates , So copy the message into wait_for_updates queue
             self._add_to_observe(msg)
             self._receive_response(req_msg, msg)
 
-    def _add_to_observe(self, msg,  ack=False ,parent_msg = None):
-        if len(msg.find_option(OptionNumber.observe)) >0:
+    def _add_to_observe(self, msg, ack=False, parent_msg=None):
+        """ Adds given message to observe queue.
+        """
+        if len(msg.find_option(OptionNumber.observe)) > 0:
             idx, req_msg = self._find_message(token=msg.token, message_id=None, state=MessageState.wait_for_updates)
             msg.set_age()
             tmsg = copy.copy(msg)
@@ -408,18 +406,18 @@ class Coap(asyncore.dispatcher):
             #;TODO Do we need to check for duplicates
             self.message_queues[MessageState.wait_for_updates].append(tmsg)
 
-            logging.error('observe received and added to observe queue'.format(str(msg)))
-            if ack == True:
-                ack_msg = Message(message_id=msg.message_id, message_type=MessageType.acknowledgment,token = msg.token)
+            logging.info('observe received and added to observe queue'.format(str(msg)))
+            if ack:
+                ack_msg = Message(message_id=msg.message_id, message_type=MessageType.acknowledgment, token=msg.token)
                 self.send(ack_msg.build())
             self._remove_message(msg)
 
 
     def _send_message(self, msg):
-        """Process a message which needs to be send out.
+        """ Process a message which needs to be send out.
 
-           Converts the given message in to bytestream and then sends it over the asyncore socket.
-           Then places the message in appropriate wait queue to wait for response.
+            Converts the given message in to bytestream and then sends it over the asyncore socket.
+            Then places the message in appropriate wait queue to wait for response.
         """
         logging.info('Sending CoAP message {0}'.format(str(msg)))
 
@@ -433,15 +431,15 @@ class Coap(asyncore.dispatcher):
             self._transition_message(msg, MessageState.wait_for_response)
 
     def _timeout_message(self, msg):
-        """Timeout given message by requeueing it.
+        """ Timeout given message by requeueing it.
         """
         assert msg.get_timeout() <= 0
-        if msg.retransmission_counter < message.COAP_MAX_RETRANSMIT and msg.state != MessageState.wait_for_updates:
+        if msg.retransmission_counter < COAP_MAX_RETRANSMIT and msg.state != MessageState.wait_for_updates:
             logging.info('Retransmitting message {0}'.format(str(msg)))
             self._transition_message(msg, MessageState.wait_for_send)
             return
 
-        assert msg.state in [MessageState.wait_for_ack, MessageState.wait_for_response , MessageState.wait_for_updates]
+        assert msg.state in [MessageState.wait_for_ack, MessageState.wait_for_response, MessageState.wait_for_updates]
         if msg.state == MessageState.wait_for_ack:
             msg.status = MessageStatus.ack_timeout
         elif msg.state == MessageState.wait_for_response:
@@ -465,7 +463,7 @@ class Coap(asyncore.dispatcher):
 
     # ------------ asyncore handlers end --------------------------
 
-    def _request(self, method_code, uri_path, confirmable, options, payload=None, timeout=None, block1_size=128 , token=None):
+    def _request(self, method_code, uri_path, confirmable, options, payload=None, timeout=None, block1_size=128, token=None):
         """ Creates a CoAP request message and puts it in the state machine.
         """
         if options is None:
@@ -476,7 +474,7 @@ class Coap(asyncore.dispatcher):
         message_type = MessageType.confirmable if confirmable else MessageType.non_confirmable
 
         #Use default block size if no preferred block size is provided.
-        if payload and len(payload) > message.block_max_size and block1_size == 0:
+        if payload and len(payload) > COAP_BLOCK_MAX_SIZE and block1_size == 0:
             block1_size = 128
 
         # Add block1 option if required
@@ -490,8 +488,7 @@ class Coap(asyncore.dispatcher):
         if tok is None:
             tok = self._token_generator.get_next_token()
         msg = Message(message_id=message_id, class_detail=method_code, message_type=message_type, options=options,
-            payload=payload, block1_size=block1_size,
-              token = tok)
+                      payload=payload, block1_size=block1_size, token=tok)
 
         # add to the transmitter queue and wakeup the transmitter to do the processing
         msg.transaction_complete_event.clear()
@@ -503,19 +500,17 @@ class Coap(asyncore.dispatcher):
             msg.status = MessageStatus.failed
         return CoapResult(request_msg=msg, response_msg=msg.server_reply_list[-1])
 
-    def stop_listening(self, uripath ,confirmable=True ):
+    def stop_listening(self, uri_path, confirmable=True):
         result = None
         updates = MessageState.wait_for_updates
         if len(self.message_queues[updates]) > 0:
             logging.info('stop_listening() - wait Q has  {0}'.format(len(self.message_queues[updates])))
             for msg in self.message_queues[updates]:
-                if msg.url == uripath:
-                    result =  self._request(method_code=MethodCode.get, uri_path = uripath,confirmable=confirmable,token=msg.token , options=None)
+                if msg.url == uri_path:
+                    result = self._request(method_code=MethodCode.get, uri_path=uri_path, confirmable=confirmable, token=msg.token, options=None)
                     self._remove_message(msg)
                     break
         return result
-
-
 
     def get(self, uri_path, confirmable=True, options=None):
         """ CoAP GET Request """
@@ -534,7 +529,7 @@ class Coap(asyncore.dispatcher):
         return self._request(method_code=MethodCode.delete, uri_path=uri_path, confirmable=confirmable, options=options)
 
 
-class CoapResult:
+class CoapResult(object):
     """ Represents result of a CoAP Request
     """
     def __init__(self, request_msg, response_msg):
@@ -555,47 +550,47 @@ class CoapResult:
             self.options = []
 
 
-def request(coap_url, method=MethodCode.get, payload=None ):
+def request(coap_url, method=MethodCode.get, payload=None):
     """ A wrapper to make a single request.
 
-    Example - coap.request('coap://coap.me/hello')
+        Example - coap.request('coap://coap.me/hello')
     """
     import urlparse
-    url= urlparse.urlparse(coap_url)
+    url = urlparse.urlparse(coap_url)
     if url.scheme.lower() not in ['coap', '']:
         raise Exception('Not a CoAP URI')
 
-    c = Coap(host=url.hostname, port=url.port if url.port else COAP_DEFAULT_PORT)
+    coap = Coap(host=url.hostname, port=url.port if url.port else COAP_DEFAULT_PORT)
     if method == MethodCode.get:
-        result = c.get(url.path[1:])
+        result = coap.get(url.path[1:])
     elif method == MethodCode.post:
-        result = c.post(url.path[1:], payload=payload)
+        result = coap.post(url.path[1:], payload=payload)
     elif method == MethodCode.put:
-        result = c.put(url.path[1:], payload=payload)
+        result = coap.put(url.path[1:], payload=payload)
     elif method == MethodCode.delete:
-        result = c.delete(url.path[1:])
-    c.destroy()
+        result = coap.delete(url.path[1:])
+    coap.destroy()
 
     return result
 
-#callback should be a class that implements , message() and timeout() , so that the client gets notifications
-#caller is responsible for cleaning up Coap object
-# returns COAP object
-def observe (coap_url, coap=None, observe=True,callback=None):
 
-
+def observe(coap_url, coap=None, observe=True, callback=None):
+    """ callback should be a class that implements , message() and timeout() , so that the client gets notifications
+        caller is responsible for cleaning up Coap object
+        returns COAP object
+    """
     import urlparse
-    url= urlparse.urlparse(coap_url)
+    url = urlparse.urlparse(coap_url)
     if url.scheme.lower() not in ['coap', '']:
         raise Exception('Not a CoAP URI')
     options = [CoapOption(option_number=OptionNumber.max_age, option_value='\x3C'),
-               CoapOption(option_number=OptionNumber.observe,option_value='\x00')]
+               CoapOption(option_number=OptionNumber.observe, option_value='\x00')]
     if coap is None and observe:
-        c = Coap(host=url.hostname,observer=callback ,port=url.port if url.port else COAP_DEFAULT_PORT)
+        c = Coap(host=url.hostname, observer=callback, port=url.port if url.port else COAP_DEFAULT_PORT)
     else:
         c = coap
     if observe:
-        result = c.get(url.path[1:],True,options)
+        result = c.get(url.path[1:], True, options)
     else:
-        result = c.stop_listening(url.path[1:],True)
-    return c
+        result = c.stop_listening(url.path[1:], True)
+    return result

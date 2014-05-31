@@ -4,12 +4,11 @@ Provides abstraction over low level coap protocol data structures(Option and Mes
 import struct
 import threading
 import random
-import math
 from enum import Enum
 from datetime import datetime
 
 from message_format import CoapMessage, CoapOption
-from code_registry import MessageType , OptionNumber
+from code_registry import MessageType, OptionNumber
 
 COAP_VERSION = 1
 COAP_MAX_MESSAGE_ID = 0xFFFF
@@ -18,10 +17,11 @@ COAP_ACK_TIMEOUT = 2
 COAP_ACK_RANDOM_FACTOR = 1.5
 COAP_MAX_RETRANSMIT = 4
 
-"""Possible block payload sizes"""
-block_sizes = [16, 32, 64, 128, 256, 512, 1024]
-block_min_size = 16
-block_max_size = 1024
+COAP_BLOCK_MIN_SIZE = 16
+COAP_BLOCK_MAX_SIZE = 1024
+
+#Possible block payload sizes
+_COAP_BLOCK_SIZES = [16, 32, 64, 128, 256, 512, 1024]
 
 
 class MessageState(int, Enum):
@@ -60,15 +60,16 @@ class Option(CoapOption):
         """
         Encodes given block number, more and size to form a CoAP block option value as byte string.
         """
-        if size > block_max_size:
+        if size > COAP_BLOCK_MAX_SIZE:
             raise 'Invalid size {0}'.format(size)
 
-        m = 1 if more else 0
-        for szx, s in enumerate(block_sizes):
-            if size <= s:
+        more_bit = 1 if more else 0
+        szx = 0
+        for szx, size_value in enumerate(_COAP_BLOCK_SIZES):
+            if size <= size_value:
                 break
 
-        value = (block_number << 4) | (m << 3) | szx
+        value = (block_number << 4) | (more_bit << 3) | szx
         bit_len = value.bit_length()
         byte_len = (bit_len / 8) + (1 if bit_len % 8 != 0 else 0)
         if byte_len == 1:
@@ -105,22 +106,21 @@ class Option(CoapOption):
 
 
 class Message(CoapMessage):
-    """ Subclass of CoapMessage to provide additional services(such as timeout, retransmission)
-    """
+    """ Subclass of CoapMessage to provide additional services(such as timeout, retransmission)"""
     def __init__(self, message_id=0, message_type=MessageType.confirmable, class_code=0, class_detail=0,
                  token='', options=None, payload=None, block1_size=0):
 
-        assert payload is None or block1_size in block_sizes
+        assert payload is None or block1_size in _COAP_BLOCK_SIZES
 
         if options is None:
             options = []
 
-        """Original payload which should be send to server(through PUT/POST request)"""
+        #Original payload which should be send to server(through PUT/POST request)
         self.block1_payload = payload
-        """Preferred block size should be used in block1 request"""
+        #Preferred block size should be used in block1 request
         self.block1_preferred_size = block1_size
 
-        """Payload for this trip"""
+        #Payload for this trip
         if payload and len(payload) > block1_size:
             payload = payload[:block1_size]
 
@@ -131,35 +131,35 @@ class Message(CoapMessage):
         #assert token is None or type(token) is bytearray
         assert self.token_length in [0, 1, 2, 4, 8]
 
-        """State machine states"""
+        #State machine states
         self.state = MessageState.init
-        """When was the message state changed."""
+        #When was the message state changed.
         self._state_change_timestamp = datetime.now()
-        """What is the time out for this message
 
-        Using this timeout, _state_change_timestamp and datetime.now() it is easy to find whether timeout happened or not.
-        """
+        #Time out for this message
+        #Using this timeout, _state_change_timestamp and datetime.now() it is easy to find whether timeout happened or not.
         self.timeout = random.uniform(COAP_ACK_TIMEOUT, COAP_ACK_TIMEOUT * COAP_ACK_RANDOM_FACTOR)
-        """How many times this message was retransmitted(because of timeout).
 
-        Once this count reaches COAP_MAX_RETRANSMIT the message will be set to failed state.
-        """
+        #How many times this message was retransmitted(because of timeout).
+        # Once this count reaches COAP_MAX_RETRANSMIT the message will be set to failed state.
         self.retransmission_counter = 0
 
-        """Status of the request/response"""
+        #Status of the request/response
         self.status = MessageStatus.success
 
-        """"Messages received from the other side as a reply"""
+        #Messages received from the other side as a reply
         self.server_reply_list = []
 
-        """An event on which callers can wait.
-
-        This event will be triggered once the coap message it transmitted and received a response or timeout.
-        """
+        #An event on which callers can wait.
+        #This event will be triggered once the coap message it transmitted and received a response or timeout.
         self.transaction_complete_event = threading.Event()
-        
+
         self.age = -1.0
-        self.url = self.get_requestURL()
+        opt = self.find_option(OptionNumber.uri_path)
+        if len(opt) > 0:
+            self.url = opt[0].value
+        else:
+            self.url = ''
 
     def recycle(self, msg_id):
         """ Recycle the given message so that it can be used to send copy/similar message again.
@@ -180,15 +180,6 @@ class Message(CoapMessage):
         self.state = new_state
         self._state_change_timestamp = datetime.now()
 
-    def get_timeout(self):
-        """
-        Returns timeout remaining in seconds.
-        +ve value means the timeout is in future.
-        -ve value means it is already late.
-        """
-        passed_time = (datetime.now() - self._state_change_timestamp).total_seconds()
-        return self.timeout - passed_time
-
     @staticmethod
     def parse(data):
         coap_msg = CoapMessage.parse(data)
@@ -207,13 +198,8 @@ class Message(CoapMessage):
         """
         Returns given option_number in the current message and returns result as a list.
         """
-        return filter(lambda option:option.option_number == option_number, self.coap_option)
-    def get_requestURL(self):
-        result = ''
-        opt = self.find_option(OptionNumber.uri_path)
-        if len(opt) > 0:
-            result = opt[0].value
-        return result
+        return [option for option in self.coap_option if option.option_number == option_number]
+        #return filter(lambda option: option.option_number == option_number, self.coap_option)
 
     def remove_option(self, option_number):
         """
@@ -223,21 +209,30 @@ class Message(CoapMessage):
         for index, option in enumerate(self.coap_option):
             if option.option_number == option_number:
                 del self.coap_option[index]
+
     def set_age(self):
-        opt  = self.find_option(OptionNumber.max_age)
+        opt = self.find_option(OptionNumber. max_age)
         if len(opt) > 0:
             fmt = 'I'
             if opt[0].length == 1:
                 fmt = 'B'
             elif opt[0].length == 2:
                 fmt = 'H'
-            self.age = struct.unpack(fmt,opt[0].value)[0]
+            self.age = struct.unpack(fmt, opt[0].value)[0]
 
     def get_time_remaining(self):
         passed_time = (datetime.now() - self._state_change_timestamp).total_seconds()
         if self.age != -1:
-            return  self.age - passed_time
+            return self.age - passed_time
         return self.age
+
+    def get_timeout(self):
+        """ Returns timeout remaining in seconds.
+        +ve value means the timeout is in future.
+        -ve value means it is already late.
+        """
+        passed_time = (datetime.now() - self._state_change_timestamp).total_seconds()
+        return self.timeout - passed_time
 
 
 class MessageIdGenerator():
