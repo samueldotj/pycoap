@@ -154,7 +154,10 @@ class Message(CoapMessage):
         #This event will be triggered once the coap message it transmitted and received a response or timeout.
         self.transaction_complete_event = threading.Event()
 
+        # Observe specific fields
+        self.callback = None
         self.age = -1.0
+
         opt = self.find_option(OptionNumber.uri_path)
         if len(opt) > 0:
             self.url = opt[0].value
@@ -189,42 +192,38 @@ class Message(CoapMessage):
         return msg
 
     def add_option(self, option):
-        """
-        Adds given options to the option list.
-        """
+        """ Adds given options to the option list."""
         self.coap_option.append(option)
 
     def find_option(self, option_number):
-        """
-        Returns given option_number in the current message and returns result as a list.
-        """
+        """ Returns given option_number in the current message and returns result as a list."""
         return [option for option in self.coap_option if option.option_number == option_number]
         #return filter(lambda option: option.option_number == option_number, self.coap_option)
 
+    def has_observe_option(self):
+        """ Returns True if the message has Observe option set"""
+        return len(self.find_option(OptionNumber.observe)) > 0
+
     def remove_option(self, option_number):
-        """
-        Removes the given option(by options number) from the option list.
+        """ Removes the given option(by options number) from the option list.
         Note - If more than one option found for the given option number, all of them are removed.
         """
         for index, option in enumerate(self.coap_option):
             if option.option_number == option_number:
                 del self.coap_option[index]
 
-    def set_age(self):
-        opt = self.find_option(OptionNumber. max_age)
+    def get_age_from_option(self):
+        """ Finds max age option in the message and returns the value.
+        """
+        opt = self.find_option(OptionNumber.max_age)
         if len(opt) > 0:
             fmt = 'I'
             if opt[0].length == 1:
                 fmt = 'B'
             elif opt[0].length == 2:
                 fmt = 'H'
-            self.age = struct.unpack(fmt, opt[0].value)[0]
-
-    def get_time_remaining(self):
-        passed_time = (datetime.now() - self._state_change_timestamp).total_seconds()
-        if self.age != -1:
-            return self.age - passed_time
-        return self.age
+            return struct.unpack(fmt, opt[0].value)[0]
+        return -1
 
     def get_timeout(self):
         """ Returns timeout remaining in seconds.
@@ -232,7 +231,10 @@ class Message(CoapMessage):
         -ve value means it is already late.
         """
         passed_time = (datetime.now() - self._state_change_timestamp).total_seconds()
-        return self.timeout - passed_time
+        if self.age == -1:
+            return self.timeout - passed_time
+        else:
+            return self.age - passed_time
 
 
 class MessageIdGenerator():

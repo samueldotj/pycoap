@@ -60,6 +60,7 @@ class OptionNumber(int, Enum):
     uri_host = 3
     etag = 4
     if_none_match = 5
+    location = 6
     uri_port = 7
     location_path = 8
     observe = 6

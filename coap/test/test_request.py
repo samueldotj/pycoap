@@ -2,7 +2,9 @@
 Functional tests for CoAP requests.
 """
 
-from ..coap import request, MethodCode
+import time
+
+from ..coap import request, MethodCode, Coap
 from ..code_registry import ResponseCode
 
 
@@ -29,3 +31,16 @@ def test_block1_post():
 def test_block1_put():
     result = request('coap://coap.me/large-update', MethodCode.put, payload='test update ' * 100)
     assert result.payload == '' and result.response_code == ResponseCode.changed
+
+
+def _obs_basic_callback(payload, msg):
+    _obs_basic_callback.counter += 1
+
+def test_obs_basic():
+    _obs_basic_callback.counter = 0
+    coap = Coap('iot.eclipse.org')
+    result = coap.observe('obs', _obs_basic_callback)
+    time.sleep(5)
+    coap.stop_observe('obs')
+    coap.destroy()
+    assert _obs_basic_callback.counter >= 2
