@@ -2,7 +2,7 @@
 Provides abstraction over low level coap protocol data structures(Option and Message).
 """
 import struct
-import threading
+import gevent.event
 import random
 from enum import Enum
 from datetime import datetime
@@ -152,7 +152,7 @@ class Message(CoapMessage):
 
         #An event on which callers can wait.
         #This event will be triggered once the coap message it transmitted and received a response or timeout.
-        self.transaction_complete_event = threading.Event()
+        self.transaction_complete_event = gevent.event.Event()
 
         # Observe specific fields
         self.callback = None

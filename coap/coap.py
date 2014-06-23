@@ -2,15 +2,16 @@
 
 There is a simple state machine which maintains the message states such as ACK, RST. This state machine runs as
 a separate thread(_fsm_loop).
-
-asyncore is used for UDP socket options. asyncore runs as a separate thread(_asyncore_loop) to handle
-sock receive and send operations. Currently asyncore is mainly used for asynchronous sock.recv().
 """
 
-import threading
 import socket
 import logging
-import asyncore
+
+import gevent.monkey
+gevent.monkey.patch_all()
+import gevent
+import gevent.event
+import gevent.socket
 
 from code_registry import MethodCode, MessageType, OptionNumber, ResponseCodeClass
 from message import Message, Option, MessageState, MessageStatus, CoapOption, \
@@ -47,17 +48,16 @@ def _extract_stack(count=5):
     return result
 
 
-class Coap(asyncore.dispatcher):
+class Coap():
     """ Manages CoAP request to a server."""
     def __init__(self, host, port=COAP_DEFAULT_PORT, timeout=DEFAULT_REQUEST_TIMEOUT,
                  message_id_generator=SequenceMessageIdGenerator(),
                  token_generator=SequenceTokenGenerator(token_length=2)):
-        asyncore.dispatcher.__init__(self)
 
         # decode the given host name and create a socket out of it.
         af, socktype, proto, canonname, sa = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)[0]
-        self.create_socket(af, socktype)
-        self.connect(sa)
+        self._socket = gevent.socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
+        self._socket.connect(sa)
 
         self.timeout = timeout
 
@@ -75,30 +75,36 @@ class Coap(asyncore.dispatcher):
             MessageState.wait_for_updates: []
         }
         # A event to continue state machine processing.
-        self.fsm_event = threading.Event()
+        self.fsm_event = gevent.event.Event()
 
         # If this flag is set then the threads created by this class should exit.
         self._stop_requested = False
 
-        self.asyncore_thread = threading.Thread(target=self._asyncore_loop)
-        self.asyncore_thread.start()
-
-        self.fsm_thread = threading.Thread(target=self._fsm_loop)
-        self.fsm_thread.start()
+        # Greenlets created
+        self._greenlets = [gevent.spawn(self._socket_receive_loop),
+                           gevent.spawn(self._fsm_loop)]
 
     def destroy(self):
         """ Stops the threads started by this class. """
         logging.debug('Stopping threads')
         self._stop_requested = True
-
-        self.close()
-        self.asyncore_thread.join()
-
+        self._socket.close()
         self.fsm_event.set()
-        self.fsm_thread.join()
 
-    def _asyncore_loop(self):
-        asyncore.loop()
+        gevent.joinall(self._greenlets)
+
+    def _socket_receive_loop(self):
+        """ Receives data from socket forever.   """
+        while True:
+            if self._stop_requested:
+                return
+            data_bytes = self._socket.recv(UDP_RECEIVE_BUFFER_SIZE)
+            if self._stop_requested:
+                return
+            msg = Message.parse(bytearray(data_bytes))
+            self._transition_message(msg, MessageState.to_be_received)
+            self.fsm_event.set()
+
 
     def _get_next_timeout(self):
         """ Returns the when the next timeout event should fire(in seconds).
@@ -218,7 +224,7 @@ class Coap(asyncore.dispatcher):
         if parent_msg is None:
             logging.warning('ACK received but no matching message found - Sending RESET')
             reset_msg = Message(message_id=msg.message_id, message_type=MessageType.reset)
-            self.send(reset_msg.build())
+            self._socket.send(reset_msg.build())
             return
         if parent_msg.type != MessageType.confirmable:
             logging.error('ACK received for NON-CONFIRMABLE message - Ignoring')
@@ -370,7 +376,7 @@ class Coap(asyncore.dispatcher):
                 logging.warning('Unsupported critical option {0}'.format(opt.option_number))
             logging.warning('Sending RESET for {0}'.format(str(msg)))
             reset_msg = Message(message_id=msg.message_id, message_type=MessageType.reset)
-            self.send(reset_msg.build())
+            self._socket.send(reset_msg.build())
             return
 
         has_observe_option = msg.has_observe_option()
@@ -398,7 +404,7 @@ class Coap(asyncore.dispatcher):
         # We got the response as separate message, first send ACK if needed.
         if msg.type == MessageType.confirmable:
             ack_msg = Message(message_id=msg.message_id, message_type=MessageType.acknowledgment, token=msg.token)
-            self.send(ack_msg.build())
+            self._socket.send(ack_msg.build())
 
         #if message has observe option set, the server will send updates, So copy the message into wait_for_updates queue
         if has_observe_option:
@@ -417,7 +423,7 @@ class Coap(asyncore.dispatcher):
     def _send_message(self, msg):
         """ Process a message which needs to be send out.
 
-            Converts the given message in to bytestream and then sends it over the asyncore socket.
+            Converts the given message in to bytestream and then sends it over the socket.
             Then places the message in appropriate wait queue to wait for response.
         """
         logging.info('Sending CoAP message {0}'.format(str(msg)))
@@ -425,7 +431,7 @@ class Coap(asyncore.dispatcher):
         #TODO - implement response sending.
         assert msg.class_code == 0
 
-        self.send(msg.build())
+        self._socket.send(msg.build())
         if msg.type == MessageType.confirmable:
             self._transition_message(msg, MessageState.wait_for_ack)
         else:
@@ -451,18 +457,6 @@ class Coap(asyncore.dispatcher):
         logging.error('TIMEOUT - Removing message {0}'.format(str(msg)))
         self._remove_message(msg)
         msg.transaction_complete_event.set()
-
-    # ------------ asyncore handlers -------------------------------
-    def handle_close(self):
-        self.close()
-
-    def handle_read(self):
-        data_bytes = self.recv(UDP_RECEIVE_BUFFER_SIZE)
-        msg = Message.parse(bytearray(data_bytes))
-        self._transition_message(msg, MessageState.to_be_received)
-        self.fsm_event.set()
-
-    # ------------ asyncore handlers end --------------------------
 
     def _send_request(self, method_code, uri_path, confirmable, options, payload=None, timeout=None,
                       block1_size=128, token=None, callback=None):
@@ -555,7 +549,7 @@ class Coap(asyncore.dispatcher):
         # Also send a RESET message.
         # According to RFC the above message itself if enough but some servers are not respecting it.
         reset_msg = Message(message_id=obs_msg.message_id, message_type=MessageType.reset, token=obs_msg.token)
-        self.send(reset_msg.build())
+        self._socket.send(reset_msg.build())
         self._remove_message(obs_msg)
 
         return True
