@@ -4,11 +4,12 @@ There is a simple state machine which maintains the message states such as ACK, 
 a separate thread(_fsm_loop).
 """
 
+import gevent.monkey
+gevent.monkey.patch_all()
+
 import socket
 import logging
 
-import gevent.monkey
-gevent.monkey.patch_all()
 import gevent
 import gevent.event
 import gevent.socket
@@ -55,7 +56,7 @@ class Coap():
                  token_generator=SequenceTokenGenerator(token_length=2)):
 
         # decode the given host name and create a socket out of it.
-        af, socktype, proto, canonname, sa = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)[0]
+        af, socktype, proto, canonname, sa = gevent.socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)[0]
         self._socket = gevent.socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
         self._socket.connect(sa)
 
