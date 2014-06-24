@@ -8,6 +8,7 @@ import gevent.monkey
 gevent.monkey.patch_all()
 
 import socket
+import urlparse
 import logging
 
 import gevent
@@ -465,9 +466,15 @@ class Coap():
         """
         if options is None:
             options = []
+        url_parsed = urlparse.urlparse(uri_path)
+        uri_path = url_parsed.path
         for path_segment in uri_path.split('/'):
             option = Option(option_number=OptionNumber.uri_path, option_value=path_segment)
             options.append(option)
+        if url_parsed.query:
+            option = Option(option_number=OptionNumber.uri_query, option_value=url_parsed.query)
+            options.append(option)
+
         message_type = MessageType.confirmable if confirmable else MessageType.non_confirmable
 
         #Use default block size if no preferred block size is provided.
@@ -582,20 +589,22 @@ def request(coap_url, method=MethodCode.get, payload=None):
 
         Example - coap.request('coap://coap.me/hello')
     """
-    import urlparse
     url = urlparse.urlparse(coap_url)
     if url.scheme.lower() not in ['coap', '']:
         raise Exception('Not a CoAP URI')
 
     coap = Coap(host=url.hostname, port=url.port if url.port else COAP_DEFAULT_PORT)
+    uri_path = url.path[1:]
+    if url.query:
+        uri_path += '?' + url.query
     if method == MethodCode.get:
-        result = coap.get(url.path[1:])
+        result = coap.get(uri_path)
     elif method == MethodCode.post:
-        result = coap.post(url.path[1:], payload=payload)
+        result = coap.post(uri_path, payload=payload)
     elif method == MethodCode.put:
-        result = coap.put(url.path[1:], payload=payload)
+        result = coap.put(uri_path, payload=payload)
     elif method == MethodCode.delete:
-        result = coap.delete(url.path[1:])
+        result = coap.delete(uri_path)
     coap.destroy()
 
     return result

@@ -18,6 +18,11 @@ def test_separate_response():
     assert result.payload == 'That took a long time' and result.response_code == ResponseCode.content
 
 
+def test_uri_query():
+    result = request('coap://coap.me/query?hello')
+    assert result.payload == 'You asked me about: hello' and result.response_code == ResponseCode.content
+
+
 def test_block2():
     result = request('coap://coap.me/query')
     assert result.payload == 'You asked me about: Nothing particular.' and result.response_code == ResponseCode.content
