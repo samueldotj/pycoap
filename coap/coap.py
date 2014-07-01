@@ -274,6 +274,10 @@ class Coap():
         if len(block1_options) == 0 and len(block2_options) == 0:
             return False
 
+        if resp_msg.class_code != ResponseCodeClass.success:
+            logging.error('BLOCK message with error. {0}.{1}'.format(resp_msg.class_code, resp_msg.class_detail))
+            return False
+
         if len(block1_options) > 1:
             logging.warning('Multiple BLOCK1 options found in response - ignoring everything else but first')
         if len(block2_options) > 1:
@@ -293,9 +297,6 @@ class Coap():
         """
         last_block_number, m_bit, pref_max_size = Option.block_value_decode(req_block1_option.value)
         logging.debug('Block1 response: block_number={0} m_bit={1} size={2}'.format(last_block_number, m_bit, pref_max_size))
-        if resp_msg.class_detail not in [MethodCode.post, MethodCode.put]:
-            logging.error('BLOCK1 message with invalid method code {0} - Ignoring'.format(resp_msg.class_detail))
-            return
 
         block_number = last_block_number + 1
         req_msg.block1_preferred_size = pref_max_size
@@ -324,9 +325,6 @@ class Coap():
         """
         block_number, more, size = Option.block_value_decode(block2_option.value)
         logging.debug('Block2 response: block_number={0} m_bit={1} size={2}'.format(block_number, more, size))
-        if resp_msg.class_detail != MethodCode.get:
-            logging.error('BLOCK2 message with invalid method code. {0}'.format(resp_msg.class_detail))
-            return
 
         if more:
             #send request to fetch next block, reuse the same message(change block2 option and msg_id)
