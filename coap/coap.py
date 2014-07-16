@@ -37,6 +37,8 @@ implemented_options = [
     OptionNumber.block2,
 ]
 
+coap_log = logging.getLogger('coap')
+
 
 def _extract_stack(count=5):
     """
@@ -88,7 +90,7 @@ class Coap():
 
     def destroy(self):
         """ Stops the threads started by this class. """
-        logging.debug('Stopping threads')
+        coap_log.debug('Stopping threads')
         self._stop_requested = True
         self._socket.close()
         self.fsm_event.set()
@@ -136,7 +138,7 @@ class Coap():
         while True:
             # Sleep until something need to be done(either new messages needs to be send or timeout)
             timeout = self._get_next_timeout()
-            logging.debug('FSM - Waiting for event with timeout {0}'.format(timeout))
+            coap_log.debug('FSM - Waiting for event with timeout {0}'.format(timeout))
             if timeout > 0:
                 self.fsm_event.wait(timeout)
             else:
@@ -146,14 +148,14 @@ class Coap():
             # Receive messages
             messages = self.message_queues[MessageState.to_be_received]
             if len(messages) > 0:
-                logging.debug('FSM - Receiving {0} messages'.format(len(messages)))
+                coap_log.debug('FSM - Receiving {0} messages'.format(len(messages)))
             for msg in messages:
                 self._receive_message(msg)
 
             # Send all messages in the send queue
             messages = self.message_queues[MessageState.wait_for_send]
             if len(messages) > 0:
-                logging.debug('FSM - Sending {0} messages'.format(len(messages)))
+                coap_log.debug('FSM - Sending {0} messages'.format(len(messages)))
             for msg in messages:
                 self._send_message(msg)
 
@@ -173,7 +175,7 @@ class Coap():
                 self._timeout_message(msg)
 
             if self._stop_requested:
-                logging.debug('FSM - Terminating because stop requested')
+                coap_log.debug('FSM - Terminating because stop requested')
                 return
 
     def _find_message(self, token, message_id, state):
@@ -198,7 +200,7 @@ class Coap():
         """
         idx, unused = self._find_message(msg.token, msg.message_id, msg.state)
         if idx is not None:
-            logging.debug('From state {0} removing message {1} :: {2}'.format(msg.state, msg.message_id, _extract_stack()))
+            coap_log.debug('From state {0} removing message {1} :: {2}'.format(msg.state, msg.message_id, _extract_stack()))
             del self.message_queues[msg.state][idx]
             return True
 
@@ -212,7 +214,7 @@ class Coap():
         """
         if msg.state == MessageState.init or self._remove_message(msg):
             msg.change_state(new_state)
-            logging.debug('Putting message {0} in state {1} :: {2}'.format(msg.message_id, msg.state, _extract_stack()))
+            coap_log.debug('Putting message {0} in state {1} :: {2}'.format(msg.message_id, msg.state, _extract_stack()))
             self.message_queues[new_state].append(msg)
         else:
             raise Exception('Invalid message({0}) state {1} new_state {2}'.format(msg.message_id, msg.state, new_state))
@@ -224,22 +226,22 @@ class Coap():
 
         idx, parent_msg = self._find_message(token=None, message_id=msg.message_id, state=MessageState.wait_for_ack)
         if parent_msg is None:
-            logging.warning('ACK received but no matching message found - Sending RESET')
+            coap_log.warning('ACK received but no matching message found - Sending RESET')
             reset_msg = Message(message_id=msg.message_id, message_type=MessageType.reset)
             self._socket.send(reset_msg.build())
             return
         if parent_msg.type != MessageType.confirmable:
-            logging.error('ACK received for NON-CONFIRMABLE message - Ignoring')
+            coap_log.error('ACK received for NON-CONFIRMABLE message - Ignoring')
             return
 
         self._transition_message(parent_msg, MessageState.wait_for_response)
 
         if msg.class_code == 0 and msg.class_detail == 0:
             # if this is empty message send just for ACK we are already done.
-            logging.debug('Separate ACK received')
+            coap_log.debug('Separate ACK received')
             return
 
-        #logging.debug('Piggybacked RESPONSE {0}'.format(str(msg)))
+        #coap_log.debug('Piggybacked RESPONSE {0}'.format(str(msg)))
         if msg.has_observe_option():
             self._receive_observe(parent_msg, msg)
             return
@@ -275,16 +277,16 @@ class Coap():
             return False
 
         if resp_msg.class_code != ResponseCodeClass.success:
-            logging.error('BLOCK message with error. {0}.{1}'.format(resp_msg.class_code, resp_msg.class_detail))
+            coap_log.error('BLOCK message with error. {0}.{1}'.format(resp_msg.class_code, resp_msg.class_detail))
             return False
 
         if len(block1_options) > 1:
-            logging.warning('Multiple BLOCK1 options found in response - ignoring everything else but first')
+            coap_log.warning('Multiple BLOCK1 options found in response - ignoring everything else but first')
         if len(block2_options) > 1:
-            logging.warning('Multiple BLOCK2 options found in response - ignoring everything else but first')
+            coap_log.warning('Multiple BLOCK2 options found in response - ignoring everything else but first')
 
         if len(block1_options) > 0 and len(block2_options) > 0:
-            logging.error('BLOCK1 + BLOCK2 in a single response is not yet implemented.')
+            coap_log.error('BLOCK1 + BLOCK2 in a single response is not yet implemented.')
         elif len(block1_options) > 0:
             self._receive_block1_response(req_msg, resp_msg, block1_options[0])
         elif len(block2_options) > 0:
@@ -296,7 +298,7 @@ class Coap():
         """ Handles a Block1 option in the response message
         """
         last_block_number, m_bit, pref_max_size = Option.block_value_decode(req_block1_option.value)
-        logging.debug('Block1 response: block_number={0} m_bit={1} size={2}'.format(last_block_number, m_bit, pref_max_size))
+        coap_log.debug('Block1 response: block_number={0} m_bit={1} size={2}'.format(last_block_number, m_bit, pref_max_size))
 
         block_number = last_block_number + 1
         req_msg.block1_preferred_size = pref_max_size
@@ -324,7 +326,7 @@ class Coap():
         """ Handles a Block2 option in the response message
         """
         block_number, more, size = Option.block_value_decode(block2_option.value)
-        logging.debug('Block2 response: block_number={0} m_bit={1} size={2}'.format(block_number, more, size))
+        coap_log.debug('Block2 response: block_number={0} m_bit={1} size={2}'.format(block_number, more, size))
 
         if more:
             #send request to fetch next block, reuse the same message(change block2 option and msg_id)
@@ -357,7 +359,7 @@ class Coap():
                 payload = ''
             req_msg.callback(payload, observe_msg)
         else:
-            logging.error('OBSERVE message received but callback is missing')
+            coap_log.error('OBSERVE message received but callback is missing')
         self._remove_message(observe_msg)
 
     def _receive_message(self, msg):
@@ -365,7 +367,7 @@ class Coap():
 
             The state machine calls this function to process a received a CoAP message.
         """
-        logging.info('Received CoAP message {0}'.format(str(msg)))
+        coap_log.info('Received CoAP message {0}'.format(str(msg)))
 
         # Check if any unimplemented option appears in the message.
         # If there is any critical unsupported message we should send a reset message.
@@ -373,8 +375,8 @@ class Coap():
         unsupported_critical_options = [opt for opt in unsupported_options if opt.option_number & 1]
         if len(unsupported_critical_options) > 0:
             for opt in unsupported_critical_options:
-                logging.warning('Unsupported critical option {0}'.format(opt.option_number))
-            logging.warning('Sending RESET for {0}'.format(str(msg)))
+                coap_log.warning('Unsupported critical option {0}'.format(opt.option_number))
+            coap_log.warning('Sending RESET for {0}'.format(str(msg)))
             reset_msg = Message(message_id=msg.message_id, message_type=MessageType.reset)
             self._socket.send(reset_msg.build())
             return
@@ -384,7 +386,7 @@ class Coap():
         # If we got reset message in response to a request, then handle it accordingly
         if msg.type == MessageType.reset:
             self._remove_message(msg)
-            logging.error('RESET handling is not yet implemented')
+            coap_log.error('RESET handling is not yet implemented')
             return
 
         # If ACK is received, do the necessary processing for that first.
@@ -398,7 +400,7 @@ class Coap():
         idx, req_msg = self._find_message(token=msg.token, message_id=None, state=MessageState.wait_for_response)
         if req_msg is None and not has_observe_option:
             # This is a new REQ
-            logging.error('REQUEST not implemented yet {0}'.format(str(msg)))
+            coap_log.error('REQUEST not implemented yet {0}'.format(str(msg)))
             return
 
         # We got the response as separate message, first send ACK if needed.
@@ -412,7 +414,7 @@ class Coap():
                 idx, req_msg = self._find_message(token=msg.token, message_id=None, state=MessageState.wait_for_updates)
 
             if req_msg is None:
-                logging.error('OBSERVE message received for but not observing token {0}'.format(msg.token))
+                coap_log.error('OBSERVE message received for but not observing token {0}'.format(msg.token))
                 #TODO - send a reset message
                 return
             self._receive_observe(req_msg, msg)
@@ -426,7 +428,7 @@ class Coap():
             Converts the given message in to bytestream and then sends it over the socket.
             Then places the message in appropriate wait queue to wait for response.
         """
-        logging.info('Sending CoAP message {0}'.format(str(msg)))
+        coap_log.info('Sending CoAP message {0}'.format(str(msg)))
 
         #TODO - implement response sending.
         assert msg.class_code == 0
@@ -442,7 +444,7 @@ class Coap():
         """
         assert msg.get_timeout() <= 0
         if msg.retransmission_counter < COAP_MAX_RETRANSMIT:
-            logging.info('Retransmitting message {0}'.format(str(msg)))
+            coap_log.info('Retransmitting message {0}'.format(str(msg)))
             self._transition_message(msg, MessageState.wait_for_send)
             return
 
@@ -454,7 +456,7 @@ class Coap():
         elif msg.state == MessageState.wait_for_updates:
             msg.status = MessageStatus.observe_timeout
 
-        logging.error('TIMEOUT - Removing message {0}'.format(str(msg)))
+        coap_log.error('TIMEOUT - Removing message {0}'.format(str(msg)))
         self._remove_message(msg)
         msg.transaction_complete_event.set()
 
@@ -548,7 +550,7 @@ class Coap():
         if obs_msg is None:
             return False
 
-        logging.info('Cancelling observe - {0}'.format(uri_path))
+        coap_log.info('Cancelling observe - {0}'.format(uri_path))
 
         # send stop request(get without observe option) and wait for it.
         self._request(method_code=MethodCode.get, uri_path=uri_path, confirmable=True, options=None)
