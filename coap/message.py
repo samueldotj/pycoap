@@ -36,6 +36,19 @@ class MessageState(int, Enum):
     wait_for_free = 5
     wait_for_updates = 6
 
+    @staticmethod
+    def get_str(value):
+        result = [
+            'init',
+            'to_be_received',
+            'wait_for_send',
+            'wait_for_ack',
+            'wait_for_response',
+            'wait_for_free',
+            'wait_for_updates'
+        ]
+        return result[value].upper()
+
 
 class MessageStatus(int, Enum):
     """ Message status
@@ -48,6 +61,17 @@ class MessageStatus(int, Enum):
     reset_received = 4
     observe_timeout = 5
 
+    @staticmethod
+    def get_str(value):
+        result = [
+            'success',
+            'failed',
+            'ack_timeout'
+            'response_timeout',
+            'reset_received',
+            'observe_timeout'
+        ]
+        return result[value].upper()
 
 class Option(CoapOption):
     """ Subclass of CoapOptions to provide additional services(for now nothing).

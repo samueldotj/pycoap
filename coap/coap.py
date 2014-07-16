@@ -142,7 +142,7 @@ class Coap():
         while True:
             # Sleep until something need to be done(either new messages needs to be send or timeout)
             timeout = self._get_next_timeout()
-            coap_log.debug('FSM - Waiting for event with timeout {0}'.format(timeout))
+            coap_log.debug('FSM - Waiting for event with timeout {0} seconds'.format(timeout))
             if timeout > 0:
                 self.fsm_event.wait(timeout)
             else:
@@ -195,7 +195,7 @@ class Coap():
                 return idx, msg
         return None, None
 
-    def _remove_message(self, msg):
+    def _remove_message(self, msg, log=True):
         """ Removes the given message from the state machine.
 
         Searches given message in the state machine lists.
@@ -204,7 +204,8 @@ class Coap():
         """
         idx, unused = self._find_message(msg.token, msg.message_id, msg.state)
         if idx is not None:
-            coap_log.debug('From state {0} removing message {1} :: {2}'.format(msg.state, msg.message_id, _extract_stack()))
+            if log:
+                coap_log.debug('From state {0} removing message {1} :: {2}'.format(MessageState.get_str(msg.state), msg.message_id, _extract_stack()))
             del self.message_queues[msg.state][idx]
             return True
 
@@ -216,12 +217,13 @@ class Coap():
         Changes the message state and also moves the message new state list.
         If the message is not found in the state machine then it would throw an exception.
         """
-        if msg.state == MessageState.init or self._remove_message(msg):
+        current_state = msg.state
+        if current_state == MessageState.init or self._remove_message(msg, log=False):
             msg.change_state(new_state)
-            coap_log.debug('Putting message {0} in state {1} :: {2}'.format(msg.message_id, msg.state, _extract_stack()))
+            coap_log.debug('Transition message {0} from state {1} to {2} :: {3}'.format(msg.message_id, MessageState.get_str(current_state), MessageState.get_str(msg.state), _extract_stack()))
             self.message_queues[new_state].append(msg)
         else:
-            raise Exception('Invalid message({0}) state {1} new_state {2}'.format(msg.message_id, msg.state, new_state))
+            raise Exception('Invalid message({0}) state {1} new_state {2}'.format(msg.message_id, MessageState.get_str(msg.state), MessageState.get_str(new_state)))
 
     def _receive_ack(self, msg):
         """Receives an ACK and transitions message's state based on that.
@@ -448,7 +450,8 @@ class Coap():
         """
         assert msg.get_timeout() <= 0
         if msg.retransmission_counter < COAP_MAX_RETRANSMIT:
-            coap_log.info('Retransmitting message {0}'.format(str(msg)))
+            coap_log.info('Retransmitting ({1}/{2}) message {0}'.format(str(msg), msg.retransmission_counter, COAP_MAX_RETRANSMIT))
+            msg.retransmission_counter += 1
             self._transition_message(msg, MessageState.wait_for_send)
             return
 
@@ -516,7 +519,11 @@ class Coap():
         if not msg.transaction_complete_event.wait(timeout):
             msg.status = MessageStatus.failed
 
-        return CoapResult(request_msg=msg, response_msg=msg.server_reply_list[-1])
+        if len(msg.server_reply_list) > 0:
+            response_msg = msg.server_reply_list[-1]
+        else:
+            response_msg = None
+        return CoapResult(request_msg=msg, response_msg=response_msg)
 
     def get(self, uri_path, confirmable=True, options=None):
         """ CoAP GET Request """
