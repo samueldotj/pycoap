@@ -102,12 +102,16 @@ class Coap():
         while True:
             if self._stop_requested:
                 return
-            data_bytes = self._socket.recv(UDP_RECEIVE_BUFFER_SIZE)
-            if self._stop_requested:
-                return
-            msg = Message.parse(bytearray(data_bytes))
-            self._transition_message(msg, MessageState.to_be_received)
-            self.fsm_event.set()
+            try:
+                data_bytes = self._socket.recv(UDP_RECEIVE_BUFFER_SIZE)
+                if self._stop_requested:
+                    return
+            except:
+                pass
+            else:
+                msg = Message.parse(bytearray(data_bytes))
+                self._transition_message(msg, MessageState.to_be_received)
+                self.fsm_event.set()
 
 
     def _get_next_timeout(self):
