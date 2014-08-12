@@ -363,7 +363,7 @@ class Coap():
                 payload = observe_msg.payload.value
             else:
                 payload = ''
-            req_msg.callback(payload, observe_msg)
+            req_msg.callback(payload, observe_msg, req_msg.callback_arg)
         else:
             coap_log.error('OBSERVE message received but callback is missing')
         self._remove_message(observe_msg)
@@ -468,7 +468,7 @@ class Coap():
         msg.transaction_complete_event.set()
 
     def _send_request(self, method_code, uri_path, confirmable, options, payload=None, timeout=None,
-                      block1_size=128, token=None, callback=None):
+                      block1_size=128, token=None, callback=None, callback_arg=None):
         """ Creates a CoAP request message and puts it in the state machine.
         """
         if options is None:
@@ -501,6 +501,7 @@ class Coap():
         msg = Message(message_id=message_id, class_detail=method_code, message_type=message_type, options=options,
                       payload=payload, block1_size=block1_size, token=tok)
         msg.callback = callback
+        msg.callback_arg = callback_arg
 
         # add to the transmitter queue and wakeup the transmitter to do the processing
         msg.transaction_complete_event.clear()
@@ -510,10 +511,11 @@ class Coap():
         return msg
 
     def _request(self, method_code, uri_path, confirmable, options, payload=None, timeout=None,
-                 block1_size=128, token=None, callback=None):
+                 block1_size=128, token=None, callback=None, callback_arg=None):
         """ Sends a CoAP message and waits for the ACK/response. """
         msg = self._send_request(method_code=method_code, uri_path=uri_path, confirmable=confirmable, options=options,
-                                 payload=payload, timeout=timeout, block1_size=block1_size, token=token, callback=callback)
+                                 payload=payload, timeout=timeout, block1_size=block1_size, token=token,
+                                 callback=callback, callback_arg=callback_arg)
 
         # Wait for the response event to fire.
         if not msg.transaction_complete_event.wait(timeout):
@@ -541,7 +543,7 @@ class Coap():
         """ CoAP DELETE Request """
         return self._request(method_code=MethodCode.delete, uri_path=uri_path, confirmable=confirmable, options=options)
 
-    def observe(self, uri_path, callback):
+    def observe(self, uri_path, callback, callback_arg=None):
         """ Start Observing a coap url
 
         Callback will be invoked whenever the server sends a notification.
@@ -549,7 +551,8 @@ class Coap():
         """
         options = [CoapOption(option_number=OptionNumber.max_age, option_value='\x3C'),
                    CoapOption(option_number=OptionNumber.observe, option_value='\x00')]
-        msg = self._request(MethodCode.get, uri_path, confirmable=True, options=options, callback=callback)
+        msg = self._request(MethodCode.get, uri_path, confirmable=True, options=options,
+                            callback=callback, callback_arg=callback_arg)
 
     def stop_observe(self, uri_path):
         """ Stop Observing the specified CoAP url """

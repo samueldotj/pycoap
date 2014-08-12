@@ -180,6 +180,7 @@ class Message(CoapMessage):
 
         # Observe specific fields
         self.callback = None
+        self.callback_arg = None
         self.age = -1.0
 
         opt = self.find_option(OptionNumber.uri_path)

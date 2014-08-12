@@ -38,7 +38,7 @@ def test_block1_put():
     assert result.payload == '' and result.response_code == ResponseCode.changed
 
 
-def _obs_basic_callback(payload, msg):
+def _obs_basic_callback(payload, msg, arg):
     _obs_basic_callback.counter += 1
 
 def test_obs_basic():
